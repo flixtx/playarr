@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import { FetchProvidersMetadataJob } from './jobs/FetchProvidersMetadataJob.js';
+import Bree from 'bree';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createLogger } from './utils/logger.js';
@@ -15,32 +15,102 @@ const logger = createLogger('Main');
 
 /**
  * Main application entry point
- * Initializes the fetch engine and starts fetching metadata from all providers
+ * Uses Bree.js to schedule and run jobs automatically
  */
 async function main() {
-  const engine = new FetchProvidersMetadataJob(CACHE_DIR, DATA_DIR);
-  
-  try {
-    // Initialize engine (loads all providers and creates instances)
-    await engine.initialize();
-    
-    // Automatically fetch from all providers
-    const results = await engine.startFetch();
-    
-    logger.info('=== Fetch Results ===');
-    results.forEach(result => {
-      if (result.error) {
-        logger.error(`${result.providerName}: ${result.error}`);
-      } else {
-        logger.info(`${result.providerName}: ${result.movies} movies, ${result.tvShows} TV shows`);
+  logger.info('Starting Playarr Engine with Bree.js job scheduler...');
+
+  // Configure Bree.js jobs with schedules
+  const bree = new Bree({
+    root: path.join(__dirname, 'workers'),
+    defaultExtension: 'js',
+    jobs: [
+      {
+        name: 'fetchIPTVMetadata',
+        path: 'fetchIPTVMetadata.js',
+        interval: '1h', // Every 1 hour
+        timeout: 0, // Run immediately on startup
+        closeWorkerAfterMs: 0, // Keep worker alive - prevents parallel execution
+        worker: {
+          workerData: {
+            cacheDir: CACHE_DIR,
+            dataDir: DATA_DIR
+          }
+        }
+      },
+      {
+        name: 'processMainTitles',
+        path: 'processMainTitles.js',
+        interval: '30m', // Every 30 minutes
+        timeout: '5m', // First run 5 minutes after startup
+        closeWorkerAfterMs: 0, // Keep worker alive - prevents parallel execution
+        worker: {
+          workerData: {
+            cacheDir: CACHE_DIR,
+            dataDir: DATA_DIR
+          }
+        }
       }
+    ]
+  });
+
+  // Handle job events
+  bree.on('worker created', (name) => {
+    logger.info(`Worker created: ${name}`);
+  });
+
+  bree.on('worker deleted', (name) => {
+    logger.info(`Worker deleted: ${name}`);
+  });
+
+  bree.on('worker message', (name, message) => {
+    if (message.success) {
+      logger.info(`Job ${name} completed successfully`);
+      if (name === 'fetchIPTVMetadata' && Array.isArray(message.result)) {
+        logger.info('=== Fetch Results ===');
+        message.result.forEach(result => {
+          if (result.error) {
+            logger.error(`${result.providerName}: ${result.error}`);
+          } else {
+            logger.info(`${result.providerName}: ${result.movies} movies, ${result.tvShows} TV shows`);
+          }
+        });
+      } else if (name === 'processMainTitles' && message.result) {
+        logger.info('=== Process Results ===');
+        logger.info(`Generated: ${message.result.movies} movies, ${message.result.tvShows} TV shows`);
+      }
+    } else {
+      logger.error(`Job ${name} failed: ${message.error}`);
+    }
+  });
+
+  try {
+    // Start Bree.js scheduler
+    await bree.start();
+
+    logger.info('Job scheduler started. Jobs will run according to schedule.');
+    logger.info('- fetchIPTVMetadata: On startup and every 1 hour');
+    logger.info('- processMainTitles: First run in 5 minutes, then every 30 minutes');
+    
+    // Keep the process running
+    process.on('SIGINT', async () => {
+      logger.info('Shutting down job scheduler...');
+      await bree.stop();
+      process.exit(0);
+    });
+
+    process.on('SIGTERM', async () => {
+      logger.info('Shutting down job scheduler...');
+      await bree.stop();
+      process.exit(0);
     });
     
   } catch (error) {
-    logger.error(`Error: ${error.message}`);
+    logger.error(`Error starting job scheduler: ${error.message}`);
+    logger.error(error.stack);
+    await bree.stop();
     process.exit(1);
   }
 }
 
 main();
-
