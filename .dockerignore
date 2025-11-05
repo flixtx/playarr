@@ -7,7 +7,7 @@
 node_modules/
 engine/node_modules/
 package-lock.json
-engine/package-lock.json
+# Note: engine/package-lock.json is needed for npm ci, so we don't ignore it
 
 # Runtime data (must be mounted as volumes)
 cache/
