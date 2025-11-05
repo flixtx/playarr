@@ -3,17 +3,11 @@ import { webSocketService } from './websocket.js';
 import { createLogger } from '../utils/logger.js';
 import fs from 'fs-extra';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import { DATA_DIR } from '../config/database.js';
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Get config directory from environment or use default
-// Path: from web-api/src/services/ to root: ../../../data/settings
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../../../data');
 const PROVIDERS_FILE = path.join(DATA_DIR, 'settings', 'iptv-providers.json');
 
 const logger = createLogger('ProvidersService');

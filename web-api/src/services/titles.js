@@ -3,6 +3,9 @@ import { cacheService } from './cache.js';
 import { userService } from './users.js';
 import { DatabaseCollections, toCollectionName } from '../config/collections.js';
 import { createLogger } from '../utils/logger.js';
+import fs from 'fs-extra';
+import path from 'path';
+import { DATA_DIR } from '../config/database.js';
 
 const logger = createLogger('TitlesService');
 
@@ -85,34 +88,59 @@ class TitlesService {
   }
 
   /**
-   * Load titles from database into cache
+   * Load titles from main.json file into cache
+   * Reads from data/titles/main.json (consolidated format with type and title_key)
    * Sorts by name (alphabetically ascending) to match Python's behavior
    */
   async _loadTitles() {
     try {
-      // Load titles sorted by name (matching Python's sort_by_name = {"name": 1})
-      const titlesList = await databaseService.getDataList(
-        this._titlesCollection,
-        {}, // query
-        null, // projection
-        { name: 1 } // sort by name ascending
-      );
+      const filePath = path.join(DATA_DIR, 'titles', 'main.json');
       
-      if (!titlesList) {
+      let titlesList = [];
+      
+      if (await fs.pathExists(filePath)) {
+        const titlesData = await fs.readJson(filePath);
+        
+        // Handle both array and object formats (should be array after migration)
+        if (Array.isArray(titlesData)) {
+          titlesList = titlesData;
+        } else if (titlesData && typeof titlesData === 'object') {
+          // Legacy format: might have wrapper object
+          titlesList = titlesData.titles || titlesData.items || [];
+        }
+      } else {
+        logger.warn(`Main titles file not found at ${filePath}`);
+        this._titlesCache = new Map();
+        return;
+      }
+      
+      if (!titlesList || titlesList.length === 0) {
+        logger.info('No titles found in main.json');
         this._titlesCache = new Map();
         return;
       }
 
-      // Convert array to Map (preserving sorted order from database)
+      // Sort by name (alphabetically ascending) to match Python's behavior
+      titlesList.sort((a, b) => {
+        const nameA = (a.name || '').toLowerCase();
+        const nameB = (b.name || '').toLowerCase();
+        return nameA.localeCompare(nameB);
+      });
+
+      // Convert array to Map (preserving sorted order)
       this._titlesCache = new Map();
       for (const title of titlesList) {
-        if (title.key) {
-          this._titlesCache.set(title.key, title);
+        // Use title_key if available, otherwise generate from type and title_id
+        const titleKey = title.title_key || (title.type && title.title_id ? `${title.type}-${title.title_id}` : title.key);
+        if (titleKey) {
+          this._titlesCache.set(titleKey, title);
         }
       }
 
       // Update cache service
       cacheService.setTitles(Array.from(this._titlesCache.values()));
+      
+      logger.info(`Loaded ${this._titlesCache.size} titles from main.json`);
     } catch (error) {
       logger.error('Error loading titles:', error);
       this._titlesCache = new Map();
@@ -541,7 +569,7 @@ class TitlesService {
         };
       }
 
-      const titlesData = await this._getTitlesData();
+      const titlesData = await this.getTitlesData();
       const updatedCount = 0;
       const notFound = [];
 

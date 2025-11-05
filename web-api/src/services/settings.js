@@ -1,16 +1,11 @@
 import { createLogger } from '../utils/logger.js';
 import fs from 'fs-extra';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import { DATA_DIR } from '../config/database.js';
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Get data directory from environment or use default
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../../../data');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings', 'settings.json');
 
 const logger = createLogger('SettingsService');

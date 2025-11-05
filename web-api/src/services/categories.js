@@ -2,14 +2,7 @@ import { cacheService } from './cache.js';
 import { createLogger } from '../utils/logger.js';
 import fs from 'fs-extra';
 import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Get data directory from environment or use default
-// Path: from web-api/src/services/ to root: ../../../data
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../../../data');
+import { DATA_DIR } from '../config/database.js';
 
 const logger = createLogger('CategoriesService');
 
