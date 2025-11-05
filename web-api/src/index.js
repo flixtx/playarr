@@ -105,15 +105,15 @@ async function initialize() {
     await userService.initialize();
     logger.info('User service initialized');
 
-    // Initialize WebSocket server
+    // Initialize Socket.IO server
     webSocketService.initialize(server);
-    logger.info('WebSocket server initialized');
+    logger.info('Socket.IO server initialized');
 
     // Start HTTP server
     server.listen(PORT, () => {
       logger.info(`Server running on port ${PORT}`);
       logger.info(`API available at http://localhost:${PORT}/api`);
-      logger.info(`WebSocket available at ws://localhost:${PORT}/ws`);
+      logger.info(`Socket.IO available at ws://localhost:${PORT}/socket.io`);
     });
   } catch (error) {
     logger.error('Failed to initialize application:', error);

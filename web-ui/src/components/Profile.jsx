@@ -216,7 +216,7 @@ const Profile = ({ open, onClose }) => {
     return (
       <Dialog open={open} onClose={onClose} maxWidth="lg" fullWidth fullScreen>
         <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Typography variant="h6">Profile</Typography>
+          <Typography variant="h6" component="span">Profile</Typography>
           <IconButton onClick={onClose}>
             <CloseIcon />
           </IconButton>
@@ -247,7 +247,7 @@ const Profile = ({ open, onClose }) => {
       }}
     >
       <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Typography variant="h6">Profile</Typography>
+        <Typography variant="h6" component="span">Profile</Typography>
         <IconButton onClick={onClose}>
           <CloseIcon />
         </IconButton>

@@ -34,10 +34,8 @@ function ProviderDetailsForm({ provider, onSave, onCancel }) {
 
   useEffect(() => {
     if (provider) {
-      // Initialize urls from provider.urls or fallback to [provider.url]
-      const urls = provider.urls && provider.urls.length > 0
-        ? [...provider.urls]
-        : (provider.url ? [provider.url] : []);
+      // Initialize urls from provider.streams_urls only
+      const urls = provider.streams_urls || [];
 
       setFormData({
         id: provider.id || '',
@@ -122,15 +120,15 @@ function ProviderDetailsForm({ provider, onSave, onCancel }) {
   const handleSubmit = (e) => {
     e.preventDefault();
 
-    // For Xtream: first URL goes to 'url', all URLs go to 'urls'
-    // For AGTV: single URL to 'url', urls array limited to 1
+    // For Xtream: first URL goes to api_url, all URLs go to streams_urls
+    // For AGTV: single URL to api_url, streams_urls array limited to 1
     const isXtream = formData.type.toLowerCase() === 'xtream';
     const urls = formData.urls.filter(url => url.trim() !== '');
 
     const data = {
       id: formData.id,
-      urls: isXtream ? urls : (urls.length > 0 ? [urls[0]] : []),
-      url: urls.length > 0 ? urls[0] : '',
+      streams_urls: isXtream ? urls : (urls.length > 0 ? [urls[0]] : []),
+      api_url: urls.length > 0 ? urls[0] : '',
       username: formData.username,
       password: formData.password,
       type: formData.type.toLowerCase(),

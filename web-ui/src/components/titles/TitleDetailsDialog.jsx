@@ -231,7 +231,7 @@ const TitleDetailsDialog = ({ open, onClose, title, onWatchlistToggle, onSimilar
             >
                 <Typography
                     variant="h5"
-                    component="div"
+                    component="span"
                     sx={{ color: 'white', fontWeight: 500 }}
                 >
                     {details?.name}

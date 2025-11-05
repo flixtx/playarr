@@ -6,7 +6,6 @@ import { updateStatsFromWebSocket } from '../../store/slices/statsSlice';
 import { fetchStats } from '../../store/slices/statsSlice';
 import ListAltIcon from '@mui/icons-material/ListAlt';
 import StorageIcon from '@mui/icons-material/Storage';
-import CloudIcon from '@mui/icons-material/Cloud';
 import BoltIcon from '@mui/icons-material/Bolt';
 import InventoryIcon from '@mui/icons-material/Inventory';
 import ApiIcon from '@mui/icons-material/Api';
@@ -123,18 +122,6 @@ const SettingsStatistics = () => {
             }
         };
     }, [dispatch]);
-
-    // Define colors for different provider types
-    const getProviderColor = (type) => {
-        switch (type) {
-            case 'iptv':
-                return 'primary';
-            case 'tmdb':
-                return 'secondary';
-            default:
-                return 'info';
-        }
-    };
 
     if (loading && providerStats.length === 0) {
         return (

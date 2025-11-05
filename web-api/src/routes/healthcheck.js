@@ -3,8 +3,7 @@ import os from 'os';
 import checkDiskSpace from 'check-disk-space';
 import fs from 'fs-extra';
 import { getDatabase } from '../config/database.js';
-import { databaseService } from '../services/database.js';
-import { toCollectionName, DatabaseCollections } from '../config/collections.js';
+import { settingsService } from '../services/settings.js';
 
 const router = express.Router();
 
@@ -32,13 +31,12 @@ router.get('/', async (req, res) => {
       dbMessage = error.message || 'Connection failed';
     }
 
-    // Check TMDB service (simplified - just check if configuration exists in settings)
+    // Check TMDB service - check if tmdb_token exists in settings
     let tmdbStatus = false;
     let tmdbMessage = 'Not configured';
     try {
-      const settingsCollection = toCollectionName(DatabaseCollections.SETTINGS);
-      const tmdbConfig = await databaseService.getData(settingsCollection, { key: 'tmdb_configuration' });
-      if (tmdbConfig) {
+      const tmdbResult = await settingsService.getSetting('tmdb_token');
+      if (tmdbResult.statusCode === 200 && tmdbResult.response.value) {
         tmdbStatus = true;
         tmdbMessage = 'Configured';
       }

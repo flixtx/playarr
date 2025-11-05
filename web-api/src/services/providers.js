@@ -53,31 +53,21 @@ class ProvidersService {
   }
 
   /**
-   * Normalize provider URLs (backward compatibility)
+   * Normalize provider URLs
    */
   _normalizeUrls(providerData, existingProvider = null) {
     const providerType = providerData.type || (existingProvider ? existingProvider.type : null);
-    let urls = providerData.urls || providerData.streams_urls || (existingProvider ? (existingProvider.urls || existingProvider.streams_urls) : null);
-    const url = providerData.url || providerData.api_url || (existingProvider ? (existingProvider.url || existingProvider.api_url) : null);
-
-    // If no urls array, create from single url
-    if (!urls || urls.length === 0) {
-      urls = url ? [url] : [];
-    }
+    
+    // Use streams_urls as provided
+    let urls = providerData.streams_urls || [];
 
     // Only Xtream supports multiple stream URLs
     if (providerType !== DataProvider.XTREAM && urls.length > 1) {
       urls = urls.slice(0, 1);
     }
 
-    // First URL mirrors API url field
-    if (urls.length > 0) {
-      providerData.api_url = urls[0];
-      providerData.url = urls[0]; // For backward compatibility
-    }
-
     providerData.streams_urls = urls;
-    providerData.urls = urls; // For backward compatibility
+
     return providerData;
   }
 

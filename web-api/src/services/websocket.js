@@ -1,137 +1,123 @@
-import { WebSocketServer } from 'ws';
+import { Server } from 'socket.io';
 import { createLogger } from '../utils/logger.js';
 
 const logger = createLogger('WebSocketService');
 
 /**
- * WebSocket service for real-time updates
- * Matches Python's WebSocket implementation in API manager
+ * WebSocket service for real-time updates using Socket.IO
+ * Provides compatibility with socket.io-client in the UI
  */
 class WebSocketService {
   constructor() {
-    this._connections = new Set();
-    this._wss = null;
+    this._io = null;
+    this._apiNamespace = null;
   }
 
   /**
-   * Initialize WebSocket server
+   * Initialize Socket.IO server
    * @param {object} server - HTTP server instance from Express
    */
   initialize(server) {
-    if (this._wss) {
-      logger.warn('WebSocket server already initialized');
+    if (this._io) {
+      logger.warn('Socket.IO server already initialized');
       return;
     }
 
-    this._wss = new WebSocketServer({ server, path: '/ws' });
-
-    this._wss.on('connection', (ws, req) => {
-      this._handleConnection(ws, req);
+    // Initialize Socket.IO server
+    this._io = new Server(server, {
+      path: '/socket.io',
+      cors: {
+        origin: process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(',') : true,
+        credentials: true,
+      },
+      transports: ['websocket', 'polling'],
+      pingTimeout: 60000,
+      pingInterval: 25000,
     });
 
-    logger.info('WebSocket server initialized on /ws');
+    // Default namespace handlers
+    this._io.on('connection', (socket) => {
+      logger.info('Socket.IO client connected to default namespace');
+      this._handleConnection(this._io, socket);
+    });
+
+    // API namespace handlers
+    this._apiNamespace = this._io.of('/api');
+    this._apiNamespace.on('connection', (socket) => {
+      logger.info('Socket.IO client connected to API namespace');
+      this._handleConnection(this._apiNamespace, socket);
+    });
+
+    logger.info('Socket.IO server initialized on /socket.io');
+    logger.info('API namespace available at /socket.io/api');
   }
 
   /**
-   * Handle new WebSocket connection
+   * Handle new Socket.IO connection
+   * @param {object} namespace - Socket.IO namespace (default or /api)
+   * @param {object} socket - Socket.IO socket instance
    */
-  _handleConnection(ws, req) {
-    logger.info('WebSocket client connected');
-
-    // Add connection to set
-    this._connections.add(ws);
-
-    // Send welcome message
-    ws.send(JSON.stringify({
-      type: 'connected',
-      message: 'WebSocket connection established',
-    }));
-
-    // Handle messages
-    ws.on('message', (message) => {
-      try {
-        const data = JSON.parse(message.toString());
-        logger.debug('Received WebSocket message:', data);
-
-        // Handle ping/pong
-        if (data.type === 'ping') {
-          ws.send(JSON.stringify({ type: 'pong' }));
-        }
-      } catch (error) {
-        logger.error('Error handling WebSocket message:', error);
-      }
-    });
-
-    // Handle connection close
-    ws.on('close', () => {
-      logger.info('WebSocket client disconnected');
-      this._connections.delete(ws);
+  _handleConnection(namespace, socket) {
+    // Handle disconnect
+    socket.on('disconnect', (reason) => {
+      logger.info(`Socket.IO client disconnected: ${reason}`);
     });
 
     // Handle errors
-    ws.on('error', (error) => {
-      logger.error('WebSocket error:', error);
-      this._connections.delete(ws);
+    socket.on('error', (error) => {
+      logger.error('Socket.IO error:', error);
+    });
+
+    // Handle ping/pong (Socket.IO handles this internally, but we can add custom handlers)
+    socket.on('ping', () => {
+      socket.emit('pong');
     });
   }
 
   /**
-   * Broadcast an event to all connected WebSocket clients
-   * Matches Python's broadcast_event()
+   * Broadcast an event to all connected Socket.IO clients
    * @param {string} event - Event name
    * @param {object} data - Event data
+   * @param {string} namespace - Optional namespace ('default' or 'api'), defaults to both
    */
-  broadcastEvent(event, data) {
-    if (this._connections.size === 0) {
+  broadcastEvent(event, data, namespace = null) {
+    if (!this._io) {
+      logger.warn('Socket.IO server not initialized');
       return;
     }
 
-    const message = JSON.stringify({
-      type: event,
-      data,
-    });
+    const message = { ...data };
 
-    // Send to all connected clients
-    const disconnected = [];
-    for (const ws of this._connections) {
-      try {
-        if (ws.readyState === ws.OPEN) {
-          ws.send(message);
-        } else {
-          disconnected.push(ws);
-        }
-      } catch (error) {
-        logger.error('Error sending WebSocket message:', error);
-        disconnected.push(ws);
+    if (namespace === 'api') {
+      // Send to API namespace only
+      if (this._apiNamespace) {
+        this._apiNamespace.emit(event, message);
+        logger.debug(`Broadcasted event '${event}' to API namespace`);
       }
-    }
-
-    // Remove disconnected clients
-    for (const ws of disconnected) {
-      this._connections.delete(ws);
+    } else if (namespace === 'default') {
+      // Send to default namespace only
+      this._io.emit(event, message);
+      logger.debug(`Broadcasted event '${event}' to default namespace`);
+    } else {
+      // Send to both namespaces
+      this._io.emit(event, message);
+      if (this._apiNamespace) {
+        this._apiNamespace.emit(event, message);
+      }
+      logger.debug(`Broadcasted event '${event}' to all namespaces`);
     }
   }
 
   /**
-   * Close WebSocket server
+   * Close Socket.IO server
    */
   close() {
-    if (this._wss) {
-      // Close all connections
-      for (const ws of this._connections) {
-        try {
-          ws.close();
-        } catch (error) {
-          logger.error('Error closing WebSocket connection:', error);
-        }
-      }
-      this._connections.clear();
-
-      // Close server
-      this._wss.close(() => {
-        logger.info('WebSocket server closed');
+    if (this._io) {
+      this._io.close(() => {
+        logger.info('Socket.IO server closed');
       });
-      this._wss = null;
+      this._io = null;
+      this._apiNamespace = null;
     }
   }
 
@@ -139,7 +125,13 @@ class WebSocketService {
    * Get number of connected clients
    */
   getConnectionCount() {
-    return this._connections.size;
+    if (!this._io) {
+      return 0;
+    }
+
+    const defaultCount = this._io.sockets.sockets.size;
+    const apiCount = this._apiNamespace ? this._apiNamespace.sockets.sockets.size : 0;
+    return defaultCount + apiCount;
   }
 }
 

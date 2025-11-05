@@ -9,3 +9,8 @@ configurations/
 package-lock.json
 engine/package-lock.json
 
+# Build artifacts
+web-ui/build/
+web-ui/dist/
+web-api/dist/
+web-api/build/

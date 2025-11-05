@@ -1,5 +1,5 @@
 import { io } from 'socket.io-client';
-import { API_URL } from '../config';
+import { API_URL } from '../config/index';
 
 class SocketService {
     constructor() {
@@ -11,11 +11,27 @@ class SocketService {
         this.maxReconnectDelay = 30000;  // Maximum delay in milliseconds
     }
 
+    /**
+     * Get base URL for Socket.IO connections (without /api path)
+     */
+    _getBaseUrl() {
+        // If API_URL is relative, use current origin
+        if (API_URL.startsWith('/')) {
+            return window.location.origin;
+        }
+        // If API_URL is absolute, remove /api suffix if present
+        if (API_URL.endsWith('/api')) {
+            return API_URL.slice(0, -4);
+        }
+        // Return API_URL as-is (assuming it's already a base URL)
+        return API_URL;
+    }
+
     connect() {
         if (this.socket) return;
 
-        // Connect to default namespace
-        this.socket = io(API_URL, {
+        const baseUrl = this._getBaseUrl();
+        const socketOptions = {
             path: '/socket.io',
             transports: ['websocket', 'polling'],  // Allow both WebSocket and polling
             reconnection: true,
@@ -30,26 +46,16 @@ class SocketService {
             rememberUpgrade: true,     // Remember transport upgrade
             pingTimeout: 60000,        // Match server ping timeout
             pingInterval: 25000,       // Match server ping interval
-        });
+        };
 
-        // Connect to API namespace - use the same URL but with namespace
-        this.apiSocket = io(API_URL, {
-            path: '/socket.io',
-            transports: ['websocket', 'polling'],
-            reconnection: true,
-            reconnectionAttempts: this.maxReconnectAttempts,
-            reconnectionDelay: this.reconnectDelay,
-            reconnectionDelayMax: this.maxReconnectDelay,
-            randomizationFactor: 0.5,
-            timeout: 10000,
-            forceNew: true,
-            autoConnect: true,
-            upgrade: true,
-            rememberUpgrade: true,
-            pingTimeout: 60000,
-            pingInterval: 25000,
-            query: { namespace: '/api' }  // Use query parameter for namespace
-        });
+        // Connect to default namespace
+        this.socket = io(baseUrl, socketOptions);
+
+        // Connect to API namespace - append /api to the base URL
+        const apiNamespaceUrl = baseUrl.endsWith('/') 
+            ? `${baseUrl}api` 
+            : `${baseUrl}/api`;
+        this.apiSocket = io(apiNamespaceUrl, socketOptions);
 
         // Default namespace event handlers
         this.socket.on('connect', () => {

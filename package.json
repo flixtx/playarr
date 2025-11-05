@@ -8,10 +8,17 @@
     "start:engine": "npm --prefix engine start",
     "start:api": "npm --prefix web-api start",
     "dev": "npm --prefix engine run dev",
+    "dev:ui": "cross-env PORT=3001 npm --prefix web-ui start",
+    "dev:api": "npm --prefix web-api run dev",
+    "dev:web": "concurrently \"npm run dev:api\" \"npm run dev:ui\"",
     "install:engine": "npm --prefix engine install",
     "install:api": "npm --prefix web-api install",
     "install:ui": "npm --prefix web-ui install",
     "build:ui": "npm --prefix web-ui run build",
     "install:all": "npm run install:engine && npm run install:api && npm run install:ui"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "cross-env": "^10.1.0"
   }
 }
