@@ -1,4 +1,7 @@
 import { WebSocketServer } from 'ws';
+import { createLogger } from '../utils/logger.js';
+
+const logger = createLogger('WebSocketService');
 
 /**
  * WebSocket service for real-time updates
@@ -16,7 +19,7 @@ class WebSocketService {
    */
   initialize(server) {
     if (this._wss) {
-      console.warn('WebSocket server already initialized');
+      logger.warn('WebSocket server already initialized');
       return;
     }
 
@@ -26,14 +29,14 @@ class WebSocketService {
       this._handleConnection(ws, req);
     });
 
-    console.log('WebSocket server initialized on /ws');
+    logger.info('WebSocket server initialized on /ws');
   }
 
   /**
    * Handle new WebSocket connection
    */
   _handleConnection(ws, req) {
-    console.log('WebSocket client connected');
+    logger.info('WebSocket client connected');
 
     // Add connection to set
     this._connections.add(ws);
@@ -48,26 +51,26 @@ class WebSocketService {
     ws.on('message', (message) => {
       try {
         const data = JSON.parse(message.toString());
-        console.log('Received WebSocket message:', data);
+        logger.debug('Received WebSocket message:', data);
 
         // Handle ping/pong
         if (data.type === 'ping') {
           ws.send(JSON.stringify({ type: 'pong' }));
         }
       } catch (error) {
-        console.error('Error handling WebSocket message:', error);
+        logger.error('Error handling WebSocket message:', error);
       }
     });
 
     // Handle connection close
     ws.on('close', () => {
-      console.log('WebSocket client disconnected');
+      logger.info('WebSocket client disconnected');
       this._connections.delete(ws);
     });
 
     // Handle errors
     ws.on('error', (error) => {
-      console.error('WebSocket error:', error);
+      logger.error('WebSocket error:', error);
       this._connections.delete(ws);
     });
   }
@@ -98,7 +101,7 @@ class WebSocketService {
           disconnected.push(ws);
         }
       } catch (error) {
-        console.error('Error sending WebSocket message:', error);
+        logger.error('Error sending WebSocket message:', error);
         disconnected.push(ws);
       }
     }
@@ -119,14 +122,14 @@ class WebSocketService {
         try {
           ws.close();
         } catch (error) {
-          console.error('Error closing WebSocket connection:', error);
+          logger.error('Error closing WebSocket connection:', error);
         }
       }
       this._connections.clear();
 
       // Close server
       this._wss.close(() => {
-        console.log('WebSocket server closed');
+        logger.info('WebSocket server closed');
       });
       this._wss = null;
     }

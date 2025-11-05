@@ -1,5 +1,8 @@
 import { databaseService } from './database.js';
 import { DatabaseCollections, toCollectionName } from '../config/collections.js';
+import { createLogger } from '../utils/logger.js';
+
+const logger = createLogger('SettingsService');
 
 /**
  * Settings service for managing application settings
@@ -25,7 +28,7 @@ class SettingsService {
         statusCode: 200,
       };
     } catch (error) {
-      console.error(`Error getting setting ${key}:`, error);
+      logger.error(`Error getting setting ${key}:`, error);
       return {
         response: { error: `Failed to get setting ${key}` },
         statusCode: 500,
@@ -57,7 +60,7 @@ class SettingsService {
         statusCode: 200,
       };
     } catch (error) {
-      console.error(`Error setting ${key}:`, error);
+      logger.error(`Error setting ${key}:`, error);
       return {
         response: { error: `Failed to set ${key}` },
         statusCode: 500,
@@ -80,7 +83,7 @@ class SettingsService {
         statusCode: 200,
       };
     } catch (error) {
-      console.error(`Error deleting ${key}:`, error);
+      logger.error(`Error deleting ${key}:`, error);
       return {
         response: { error: `Failed to delete ${key}` },
         statusCode: 500,

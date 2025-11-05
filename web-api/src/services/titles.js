@@ -2,6 +2,9 @@ import { databaseService } from './database.js';
 import { cacheService } from './cache.js';
 import { userService } from './users.js';
 import { DatabaseCollections, toCollectionName } from '../config/collections.js';
+import { createLogger } from '../utils/logger.js';
+
+const logger = createLogger('TitlesService');
 
 /**
  * Titles service for handling titles data operations
@@ -46,7 +49,7 @@ class TitlesService {
 
       this._tmdbConfigLoaded = true;
     } catch (error) {
-      console.error('Error loading TMDB configuration:', error);
+      logger.error('Error loading TMDB configuration:', error);
       // Fallback to default
       this._tmdbPosterPath = 'https://image.tmdb.org/t/p/w300';
       this._tmdbBackdropPath = 'https://image.tmdb.org/t/p/w300';
@@ -111,7 +114,7 @@ class TitlesService {
       // Update cache service
       cacheService.setTitles(Array.from(this._titlesCache.values()));
     } catch (error) {
-      console.error('Error loading titles:', error);
+      logger.error('Error loading titles:', error);
       this._titlesCache = new Map();
     }
   }
@@ -397,7 +400,7 @@ class TitlesService {
         statusCode: 200,
       };
     } catch (error) {
-      console.error('Error getting titles:', error);
+      logger.error('Error getting titles:', error);
       return {
         response: { error: 'Failed to read titles data' },
         statusCode: 500,
@@ -510,7 +513,7 @@ class TitlesService {
         statusCode: 200,
       };
     } catch (error) {
-      console.error('Error getting title details:', error);
+      logger.error('Error getting title details:', error);
       return {
         response: { error: 'Failed to get title details' },
         statusCode: 500,
@@ -592,7 +595,7 @@ class TitlesService {
         statusCode: totalUpdated > 0 ? 200 : 404,
       };
     } catch (error) {
-      console.error('Error updating watchlist:', error);
+      logger.error('Error updating watchlist:', error);
       return {
         response: { error: 'Failed to update watchlist status' },
         statusCode: 500,

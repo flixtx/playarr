@@ -2,6 +2,7 @@ import fs from 'fs-extra';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
+import { createLogger } from '../utils/logger.js';
 
 dotenv.config();
 
@@ -11,6 +12,8 @@ const __dirname = path.dirname(__filename);
 // Get data directory from environment or use default
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../../data');
 const CONFIG_DIR = process.env.CONFIG_DIR || path.join(__dirname, '../../configurations');
+
+const logger = createLogger('FileStorage');
 
 /**
  * File-based storage manager for API data
@@ -33,7 +36,7 @@ class FileStorageManager {
       fs.ensureDirSync(this.configDir);
       fs.ensureDirSync(path.join(this.configDir, 'providers'));
     } catch (error) {
-      console.error('Error ensuring directories:', error);
+      logger.error('Error ensuring directories:', error);
       throw error;
     }
   }
@@ -68,7 +71,7 @@ class FileStorageManager {
       }
       return [];
     } catch (error) {
-      console.error(`Error reading file ${filePath}:`, error);
+      logger.error(`Error reading file ${filePath}:`, error);
       return [];
     }
   }
@@ -85,7 +88,7 @@ class FileStorageManager {
       }
       return {};
     } catch (error) {
-      console.error(`Error reading file ${filePath}:`, error);
+      logger.error(`Error reading file ${filePath}:`, error);
       return {};
     }
   }
@@ -103,7 +106,7 @@ class FileStorageManager {
       await fs.writeJson(tempPath, data, { spaces: 2 });
       await fs.move(tempPath, filePath, { overwrite: true });
     } catch (error) {
-      console.error(`Error writing file ${filePath}:`, error);
+      logger.error(`Error writing file ${filePath}:`, error);
       throw error;
     }
   }
@@ -113,7 +116,7 @@ class FileStorageManager {
    */
   async initialize() {
     this._ensureDirectories();
-    console.log(`File storage initialized at ${this.dataDir}`);
+    logger.info(`File storage initialized at ${this.dataDir}`);
     return true;
   }
 
@@ -138,10 +141,10 @@ export const fileStorage = FileStorageManager.getInstance();
 export async function initializeDatabase() {
   try {
     await fileStorage.initialize();
-    console.log('File storage initialized');
+    logger.info('File storage initialized');
     return { fileStorage };
   } catch (error) {
-    console.error('Failed to initialize file storage:', error);
+    logger.error('Failed to initialize file storage:', error);
     throw error;
   }
 }
@@ -158,5 +161,5 @@ export function getDatabase() {
  * Close database (no-op for file storage)
  */
 export async function closeDatabase() {
-  console.log('File storage closed');
+  logger.info('File storage closed');
 }

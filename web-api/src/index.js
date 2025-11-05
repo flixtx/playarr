@@ -9,6 +9,9 @@ import dotenv from 'dotenv';
 // Load environment variables
 dotenv.config();
 
+// Import logger
+import { createLogger } from './utils/logger.js';
+
 // Import database
 import { initializeDatabase as connectDB } from './config/database.js';
 
@@ -36,6 +39,7 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const logger = createLogger('Main');
 
 // Create HTTP server for WebSocket support
 const server = http.createServer(app);
@@ -82,7 +86,7 @@ app.get('*', (req, res) => {
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  console.error('Error:', err);
+  logger.error('Error:', err);
   res.status(err.status || 500).json({
     error: err.message || 'Internal server error',
   });
@@ -91,46 +95,46 @@ app.use((err, req, res, next) => {
 // Initialize application
 async function initialize() {
   try {
-    console.log('Initializing application...');
+    logger.info('Initializing application...');
 
     // Initialize file storage
     await connectDB();
-    console.log('File storage initialized');
+    logger.info('File storage initialized');
 
     // Initialize user service (creates default admin user)
     await userService.initialize();
-    console.log('User service initialized');
+    logger.info('User service initialized');
 
     // Initialize WebSocket server
     webSocketService.initialize(server);
-    console.log('WebSocket server initialized');
+    logger.info('WebSocket server initialized');
 
     // Start HTTP server
     server.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-      console.log(`API available at http://localhost:${PORT}/api`);
-      console.log(`WebSocket available at ws://localhost:${PORT}/ws`);
+      logger.info(`Server running on port ${PORT}`);
+      logger.info(`API available at http://localhost:${PORT}/api`);
+      logger.info(`WebSocket available at ws://localhost:${PORT}/ws`);
     });
   } catch (error) {
-    console.error('Failed to initialize application:', error);
+    logger.error('Failed to initialize application:', error);
     process.exit(1);
   }
 }
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully...');
+  logger.info('SIGTERM received, shutting down gracefully...');
   server.close(() => {
-    console.log('HTTP server closed');
+    logger.info('HTTP server closed');
     webSocketService.close();
     process.exit(0);
   });
 });
 
 process.on('SIGINT', () => {
-  console.log('SIGINT received, shutting down gracefully...');
+  logger.info('SIGINT received, shutting down gracefully...');
   server.close(() => {
-    console.log('HTTP server closed');
+    logger.info('HTTP server closed');
     webSocketService.close();
     process.exit(0);
   });

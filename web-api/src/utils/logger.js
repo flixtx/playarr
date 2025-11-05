@@ -15,7 +15,7 @@ fs.ensureDirSync(logsDir);
 
 /**
  * Create logger instance with formatted output to console and file
- * @param {string} context - Context/component name (e.g., providerId, 'ProcessProvidersTitlesJob')
+ * @param {string} context - Context/component name (e.g., 'UserService', 'ProvidersService')
  * @returns {winston.Logger} Winston logger instance
  */
 export function createLogger(context) {
@@ -45,7 +45,7 @@ export function createLogger(context) {
       // File transport - debug level and above (more verbose)
       new winston.transports.File({
         level: 'debug',
-        filename: path.join(logsDir, 'engine.log'),
+        filename: path.join(logsDir, 'api.log'),
         format: logFormat,
         maxsize: 10485760, // 10MB
         maxFiles: 5 // Keep last 5 files
@@ -53,4 +53,3 @@ export function createLogger(context) {
     ]
   });
 }
-

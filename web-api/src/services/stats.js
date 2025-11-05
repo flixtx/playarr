@@ -1,6 +1,9 @@
 import { databaseService } from './database.js';
 import { cacheService } from './cache.js';
 import { DatabaseCollections, toCollectionName } from '../config/collections.js';
+import { createLogger } from '../utils/logger.js';
+
+const logger = createLogger('StatsService');
 
 /**
  * Stats service for handling statistics data operations
@@ -45,7 +48,7 @@ class StatsService {
         statusCode: 200,
       };
     } catch (error) {
-      console.error('Error getting statistics:', error);
+      logger.error('Error getting statistics:', error);
       return {
         response: { error: 'Failed to get statistics' },
         statusCode: 500,
@@ -106,7 +109,7 @@ class StatsService {
 
       return { providers: providersList };
     } catch (error) {
-      console.error('Error getting statistics:', error);
+      logger.error('Error getting statistics:', error);
       return null;
     }
   }

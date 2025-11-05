@@ -1,7 +1,10 @@
 import { getDatabase } from '../config/database.js';
 import { fromCollectionName, getCollectionKey } from '../config/collections.js';
+import { createLogger } from '../utils/logger.js';
 import fs from 'fs-extra';
 import path from 'path';
+
+const logger = createLogger('DatabaseService');
 
 /**
  * Database service for file-based storage
@@ -80,7 +83,7 @@ class DatabaseService {
       }
       return null;
     } catch (error) {
-      console.error(`Error getting data from collection ${collectionName}:`, error);
+      logger.error(`Error getting data from collection ${collectionName}:`, error);
       return null;
     }
   }
@@ -122,7 +125,7 @@ class DatabaseService {
 
       return items;
     } catch (error) {
-      console.error(`Error getting data list from collection ${collectionName}:`, error);
+      logger.error(`Error getting data list from collection ${collectionName}:`, error);
       return null;
     }
   }
@@ -137,7 +140,7 @@ class DatabaseService {
       const query = { [key]: itemId };
       return await this.getData(collectionName, query);
     } catch (error) {
-      console.error(`Error getting item by ID from collection ${collectionName}:`, error);
+      logger.error(`Error getting item by ID from collection ${collectionName}:`, error);
       return null;
     }
   }
@@ -169,7 +172,7 @@ class DatabaseService {
       items.push(data);
       await this._fileStorage._writeJsonFile(filePath, items);
     } catch (error) {
-      console.error(`Error inserting data into collection ${collectionName}:`, error);
+      logger.error(`Error inserting data into collection ${collectionName}:`, error);
       throw error;
     }
   }
@@ -198,7 +201,7 @@ class DatabaseService {
         await this._fileStorage._writeJsonFile(filePath, items);
       }
     } catch (error) {
-      console.error(`Error inserting data list into collection ${collectionName}:`, error);
+      logger.error(`Error inserting data list into collection ${collectionName}:`, error);
       throw error;
     }
   }
@@ -240,7 +243,7 @@ class DatabaseService {
 
       return modified;
     } catch (error) {
-      console.error(`Error updating data in collection ${collectionName}:`, error);
+      logger.error(`Error updating data in collection ${collectionName}:`, error);
       return 0;
     }
   }
@@ -270,7 +273,7 @@ class DatabaseService {
         await this._fileStorage._writeJsonFile(filePath, items);
       }
     } catch (error) {
-      console.error(`Error updating data list in collection ${collectionName}:`, error);
+      logger.error(`Error updating data list in collection ${collectionName}:`, error);
       throw error;
     }
   }
@@ -294,7 +297,7 @@ class DatabaseService {
         await this._fileStorage._writeJsonFile(filePath, items);
       }
     } catch (error) {
-      console.error(`Error deleting data from collection ${collectionName}:`, error);
+      logger.error(`Error deleting data from collection ${collectionName}:`, error);
       throw error;
     }
   }
@@ -318,7 +321,7 @@ class DatabaseService {
         await this._fileStorage._writeJsonFile(filePath, filtered);
       }
     } catch (error) {
-      console.error(`Error deleting data list from collection ${collectionName}:`, error);
+      logger.error(`Error deleting data list from collection ${collectionName}:`, error);
       throw error;
     }
   }
@@ -347,7 +350,7 @@ class DatabaseService {
 
       return items.length;
     } catch (error) {
-      console.error(`Error getting count from collection ${collectionName}:`, error);
+      logger.error(`Error getting count from collection ${collectionName}:`, error);
       return 0;
     }
   }
@@ -375,7 +378,7 @@ class DatabaseService {
       // Extract keys
       return items.map(item => item[key]);
     } catch (error) {
-      console.error(`Error getting data keys from collection ${collectionName}:`, error);
+      logger.error(`Error getting data keys from collection ${collectionName}:`, error);
       return null;
     }
   }

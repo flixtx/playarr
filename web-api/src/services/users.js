@@ -2,7 +2,10 @@ import { databaseService } from './database.js';
 import { DatabaseCollections, toCollectionName } from '../config/collections.js';
 import { hashPassword, verifyPassword } from '../utils/password.js';
 import { createJWTToken } from '../utils/jwt.js';
+import { createLogger } from '../utils/logger.js';
 import crypto from 'crypto';
+
+const logger = createLogger('UserService');
 
 /**
  * User service for handling user operations
@@ -21,7 +24,7 @@ class UserService {
    */
   async initialize() {
     try {
-      console.log('Initializing user service...');
+      logger.info('Initializing user service...');
 
       // Create database indices
       await databaseService.createIndices();
@@ -32,9 +35,9 @@ class UserService {
       // Ensure default admin user exists
       await this._ensureDefaultAdminUser();
 
-      console.log(`User service initialized with ${this._usersCache.size} users`);
+      logger.info(`User service initialized with ${this._usersCache.size} users`);
     } catch (error) {
-      console.error('Failed initializing user service:', error);
+      logger.error('Failed initializing user service:', error);
       throw error;
     }
   }
@@ -65,14 +68,14 @@ class UserService {
               this._apiKeysCache.set(user.api_key, user);
             }
           } catch (error) {
-            console.warn(`Failed to load user ${user.username}:`, error);
+            logger.warn(`Failed to load user ${user.username}:`, error);
           }
         }
       }
 
-      console.log(`Cache warmed up with ${this._usersCache.size} users`);
+      logger.info(`Cache warmed up with ${this._usersCache.size} users`);
     } catch (error) {
-      console.error('Failed warming up cache:', error);
+      logger.error('Failed warming up cache:', error);
       throw error;
     }
   }
@@ -87,19 +90,19 @@ class UserService {
       const defaultPassword = process.env.DEFAULT_ADMIN_PASSWORD;
 
       if (!defaultPassword) {
-        console.warn('DEFAULT_ADMIN_PASSWORD not set, skipping default admin user creation');
+        logger.warn('DEFAULT_ADMIN_PASSWORD not set, skipping default admin user creation');
         return;
       }
 
       // Check if admin user already exists
       const existingUser = await this.getUserByUsername(defaultUsername);
       if (existingUser) {
-        console.log(`Default admin user '${defaultUsername}' already exists`);
+        logger.info(`Default admin user '${defaultUsername}' already exists`);
         return;
       }
 
       // Create default admin user with isDefaultAdmin flag
-      console.log(`Creating default admin user '${defaultUsername}'`);
+      logger.info(`Creating default admin user '${defaultUsername}'`);
       const user = await this.createUser(
         defaultUsername,
         'Admin',
@@ -117,9 +120,9 @@ class UserService {
       );
       // Update cache
       this._usersCache.set(defaultUsername, user);
-      console.log(`Default admin user '${defaultUsername}' created successfully`);
+      logger.info(`Default admin user '${defaultUsername}' created successfully`);
     } catch (error) {
-      console.error('Failed ensuring default admin user:', error);
+      logger.error('Failed ensuring default admin user:', error);
       throw error;
     }
   }
@@ -256,7 +259,7 @@ class UserService {
         return user;
       }
     } catch (error) {
-      console.error(`Failed getting user by username ${username}:`, error);
+      logger.error(`Failed getting user by username ${username}:`, error);
     }
 
     return null;
@@ -298,7 +301,7 @@ class UserService {
         }
       }
     } catch (error) {
-      console.error('Failed getting user by API key:', error);
+      logger.error('Failed getting user by API key:', error);
     }
 
     return null;
@@ -334,7 +337,7 @@ class UserService {
       
       return { response: { users: usersPublic }, statusCode: 200 };
     } catch (error) {
-      console.error('Failed getting all users:', error);
+      logger.error('Failed getting all users:', error);
       return { response: { error: 'Failed to get users' }, statusCode: 500 };
     }
   }
@@ -353,7 +356,7 @@ class UserService {
       const userPublic = this._userToPublic(user);
       return { response: userPublic, statusCode: 200 };
     } catch (error) {
-      console.error(`Failed getting user ${username}:`, error);
+      logger.error(`Failed getting user ${username}:`, error);
       return { response: { error: 'Failed to get user' }, statusCode: 500 };
     }
   }
@@ -373,7 +376,7 @@ class UserService {
       const result = await this.updateUser(username, { status: 'inactive' });
       return result;
     } catch (error) {
-      console.error(`Failed deleting user ${username}:`, error);
+      logger.error(`Failed deleting user ${username}:`, error);
       return { response: { error: 'Failed to delete user' }, statusCode: 500 };
     }
   }
@@ -445,7 +448,7 @@ class UserService {
 
       return user;
     } catch (error) {
-      console.error('Failed creating user:', error);
+      logger.error('Failed creating user:', error);
       throw error;
     }
   }
@@ -519,7 +522,7 @@ class UserService {
       const userPublic = this._userToPublic(user);
       return { response: userPublic, statusCode: 200 };
     } catch (error) {
-      console.error(`Failed updating user ${username}:`, error);
+      logger.error(`Failed updating user ${username}:`, error);
       return { response: { error: 'Failed to update user' }, statusCode: 500 };
     }
   }
@@ -540,7 +543,7 @@ class UserService {
       if (error.message.includes('already exists')) {
         return { response: { error: error.message }, statusCode: 400 };
       }
-      console.error('Failed creating user:', error);
+      logger.error('Failed creating user:', error);
       return { response: { error: 'Failed to create user' }, statusCode: 500 };
     }
   }
@@ -576,7 +579,7 @@ class UserService {
 
       return { response: { success: true }, statusCode: 200 };
     } catch (error) {
-      console.error(`Failed resetting password for user ${username}:`, error);
+      logger.error(`Failed resetting password for user ${username}:`, error);
       return { response: { error: 'Failed to reset password' }, statusCode: 500 };
     }
   }
@@ -619,7 +622,7 @@ class UserService {
 
       return { response: { api_key: newApiKey }, statusCode: 200 };
     } catch (error) {
-      console.error(`Failed regenerating API key for user ${username}:`, error);
+      logger.error(`Failed regenerating API key for user ${username}:`, error);
       return { response: { error: 'Failed to regenerate API key' }, statusCode: 500 };
     }
   }
@@ -638,7 +641,7 @@ class UserService {
       const userPublic = this._userToPublic(user);
       return { response: userPublic, statusCode: 200 };
     } catch (error) {
-      console.error(`Failed getting profile for ${username}:`, error);
+      logger.error(`Failed getting profile for ${username}:`, error);
       return { response: { error: 'Failed to get profile' }, statusCode: 500 };
     }
   }
@@ -659,7 +662,7 @@ class UserService {
 
       return await this.updateUser(username, updateData);
     } catch (error) {
-      console.error(`Failed updating profile for ${username}:`, error);
+      logger.error(`Failed updating profile for ${username}:`, error);
       return { response: { error: 'Failed to update profile' }, statusCode: 500 };
     }
   }
@@ -683,7 +686,7 @@ class UserService {
 
       return { response: { success: true, message: 'Password changed successfully' }, statusCode: 200 };
     } catch (error) {
-      console.error(`Failed changing password for ${username}:`, error);
+      logger.error(`Failed changing password for ${username}:`, error);
       return { response: { error: 'Failed to change password' }, statusCode: 500 };
     }
   }
@@ -774,7 +777,7 @@ class UserService {
 
       return true;
     } catch (error) {
-      console.error(`Failed updating watchlist for user ${username}:`, error);
+      logger.error(`Failed updating watchlist for user ${username}:`, error);
       return false;
     }
   }

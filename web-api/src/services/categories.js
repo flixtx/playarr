@@ -1,6 +1,9 @@
 import { databaseService } from './database.js';
 import { cacheService } from './cache.js';
 import { DatabaseCollections, toCollectionName } from '../config/collections.js';
+import { createLogger } from '../utils/logger.js';
+
+const logger = createLogger('CategoriesService');
 
 /**
  * Categories service for handling IPTV provider categories
@@ -20,7 +23,7 @@ class CategoriesService {
       const result = await providersService.getProvider(providerId);
       return result.statusCode === 200 ? result.response : null;
     } catch (error) {
-      console.error(`Error getting provider ${providerId}:`, error);
+      logger.error(`Error getting provider ${providerId}:`, error);
       return null;
     }
   }
@@ -74,7 +77,7 @@ class CategoriesService {
         statusCode: 200,
       };
     } catch (error) {
-      console.error('Error getting categories:', error);
+      logger.error('Error getting categories:', error);
       return {
         response: { error: 'Failed to get categories' },
         statusCode: 500,
@@ -158,7 +161,7 @@ class CategoriesService {
         statusCode: 200,
       };
     } catch (error) {
-      console.error('Error updating category:', error);
+      logger.error('Error updating category:', error);
       return {
         response: { error: 'Failed to update category' },
         statusCode: 500,

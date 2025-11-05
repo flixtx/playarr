@@ -1,5 +1,6 @@
 import { DatabaseCollections, DataProvider } from '../config/collections.js';
 import { webSocketService } from './websocket.js';
+import { createLogger } from '../utils/logger.js';
 import fs from 'fs-extra';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -13,6 +14,8 @@ const __dirname = path.dirname(__filename);
 // Get config directory from environment or use default
 const CONFIG_DIR = process.env.CONFIG_DIR || path.join(__dirname, '../../configurations');
 const PROVIDERS_DIR = path.join(CONFIG_DIR, 'providers');
+
+const logger = createLogger('ProvidersService');
 
 /**
  * Providers service for handling IPTV provider operations
@@ -32,7 +35,7 @@ class ProvidersService {
     try {
       fs.ensureDirSync(this._providersDir);
     } catch (error) {
-      console.error('Error ensuring providers directory:', error);
+      logger.error('Error ensuring providers directory:', error);
       throw error;
     }
   }
@@ -65,14 +68,14 @@ class ProvidersService {
             provider.id = providerId;
             providers.push(provider);
           } catch (error) {
-            console.error(`Error reading provider file ${file}:`, error);
+            logger.error(`Error reading provider file ${file}:`, error);
           }
         }
       }
 
       return providers;
     } catch (error) {
-      console.error('Error reading providers:', error);
+      logger.error('Error reading providers:', error);
       return [];
     }
   }
@@ -146,7 +149,7 @@ class ProvidersService {
         statusCode: 200,
       };
     } catch (error) {
-      console.error('Error getting providers:', error);
+      logger.error('Error getting providers:', error);
       return {
         response: { error: 'Failed to get providers', providers: [] },
         statusCode: 500,
@@ -176,7 +179,7 @@ class ProvidersService {
         statusCode: 200,
       };
     } catch (error) {
-      console.error('Error getting provider:', error);
+      logger.error('Error getting provider:', error);
       return {
         response: { error: 'Failed to get provider' },
         statusCode: 500,
@@ -251,7 +254,7 @@ class ProvidersService {
         statusCode: 201,
       };
     } catch (error) {
-      console.error('Error creating provider:', error);
+      logger.error('Error creating provider:', error);
       return {
         response: { error: 'Failed to create provider' },
         statusCode: 500,
@@ -301,7 +304,7 @@ class ProvidersService {
         statusCode: 200,
       };
     } catch (error) {
-      console.error('Error updating provider:', error);
+      logger.error('Error updating provider:', error);
       return {
         response: { error: 'Failed to update provider' },
         statusCode: 500,
@@ -338,7 +341,7 @@ class ProvidersService {
         statusCode: 204,
       };
     } catch (error) {
-      console.error('Error deleting provider:', error);
+      logger.error('Error deleting provider:', error);
       return {
         response: { error: 'Failed to delete provider' },
         statusCode: 500,
@@ -353,7 +356,7 @@ class ProvidersService {
     try {
       return await this.getProviders();
     } catch (error) {
-      console.error('Error getting provider priorities:', error);
+      logger.error('Error getting provider priorities:', error);
       return {
         response: { error: 'Failed to get provider priorities' },
         statusCode: 500,
@@ -395,7 +398,7 @@ class ProvidersService {
         statusCode: 200,
       };
     } catch (error) {
-      console.error('Error updating provider priorities:', error);
+      logger.error('Error updating provider priorities:', error);
       return {
         response: { error: 'Failed to update provider priorities' },
         statusCode: 500,

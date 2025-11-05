@@ -1,4 +1,7 @@
 import { titlesService } from './titles.js';
+import { createLogger } from '../utils/logger.js';
+
+const logger = createLogger('StreamService');
 
 /**
  * Constants for stream endpoint
@@ -49,7 +52,7 @@ class StreamService {
    * Matches Python's StreamService.get_best_source()
    */
   async getBestSource(titleId, mediaType, seasonNumber = null, episodeNumber = null) {
-    console.log(
+    logger.debug(
       `Getting best source for title ID: ${titleId}, media type: ${mediaType}, season: ${seasonNumber}, episode: ${episodeNumber}`
     );
 
@@ -79,7 +82,7 @@ class StreamService {
     const titleData = titlesData.get(titleKey);
 
     if (!titleData) {
-      console.warn(`Title data not found for title key: ${titleKey}`);
+      logger.warn(`Title data not found for title key: ${titleKey}`);
       return [];
     }
 
@@ -94,7 +97,7 @@ class StreamService {
 
     const streamData = streams[streamId];
     if (!streamData) {
-      console.warn(`Stream data not found for stream ID: ${streamId}`);
+      logger.warn(`Stream data not found for stream ID: ${streamId}`);
       return [];
     }
 
@@ -120,7 +123,7 @@ class StreamService {
    */
   async _checkUrl(url) {
     try {
-      console.log(`Checking URL: ${url}`);
+      logger.debug(`Checking URL: ${url}`);
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), this._timeout);
@@ -140,14 +143,14 @@ class StreamService {
       reader.releaseLock();
 
       const isValid = response.ok;
-      console.log(`URL is valid: ${isValid}`);
+      logger.debug(`URL is valid: ${isValid}`);
 
       return isValid;
     } catch (error) {
       if (error.name === 'AbortError') {
-        console.log(`URL check timed out: ${url}`);
+        logger.debug(`URL check timed out: ${url}`);
       } else {
-        console.error(`Error checking URL: ${url}`, error);
+        logger.error(`Error checking URL: ${url}`, error);
       }
       return false;
     }
