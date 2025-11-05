@@ -1,0 +1,39 @@
+/**
+ * Utility functions for parsing and manipulating title strings
+ */
+
+/**
+ * Extract year from title string (e.g., "Movie Title (2024)" -> 2024)
+ * @param {string} title - Title string that may contain year
+ * @returns {number|null} Extracted year or null if not found
+ */
+export function extractYearFromTitle(title) {
+  if (!title) return null;
+  // Match pattern like "(2024)" or "(2024-2025)"
+  const match = title.match(/\((\d{4})/);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+/**
+ * Extract base title name without year (e.g., "Movie Title (2024)" -> "Movie Title")
+ * @param {string} title - Title string that may contain year
+ * @returns {string} Base title name without year
+ */
+export function extractBaseTitle(title) {
+  if (!title) return title;
+  // Remove year patterns like "(2024)" or "(2024-2025)" from the end
+  return title.replace(/\s*\(\d{4}(?:-\d{4})?\)\s*$/, '').trim();
+}
+
+/**
+ * Extract year from release_date string (e.g., "2025-10-15" -> 2025)
+ * @param {string} releaseDate - Release date string in format "YYYY-MM-DD" or similar
+ * @returns {number|null} Extracted year or null if not found
+ */
+export function extractYearFromReleaseDate(releaseDate) {
+  if (!releaseDate) return null;
+  // Match YYYY-MM-DD format (e.g., "2025-10-15")
+  const match = releaseDate.match(/^(\d{4})/);
+  return match ? parseInt(match[1], 10) : null;
+}
+

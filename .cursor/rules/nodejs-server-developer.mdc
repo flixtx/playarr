@@ -1,0 +1,7 @@
+---
+alwaysApply: true
+---
+
+When creating code, the functions should be well JSDoc described to allow intellisense to work.
+
+When changing the code, always look at the /data configurations and stored data to understand and build the right input and output.

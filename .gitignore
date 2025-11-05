@@ -1,0 +1,11 @@
+node_modules/
+engine/node_modules/
+cache/
+data/
+configurations/
+.env
+*.log
+.DS_Store
+package-lock.json
+engine/package-lock.json
+

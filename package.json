@@ -1,0 +1,12 @@
+{
+  "name": "playarr",
+  "version": "1.0.0",
+  "description": "IPTV Playlist Manager - Monorepo",
+  "private": true,
+  "scripts": {
+    "start": "npm --prefix engine start",
+    "dev": "npm --prefix engine run dev",
+    "install:engine": "npm --prefix engine install",
+    "install:all": "npm run install:engine"
+  }
+}
