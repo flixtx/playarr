@@ -224,6 +224,35 @@ export class ProcessMainTitlesJob extends BaseJob {
   }
 
   /**
+   * Check if main title needs regeneration based on provider title updates
+   * @private
+   * @param {Object|null} existingMainTitle - Existing main title or null
+   * @param {Array<Object>} providerTitleGroups - Array of provider title groups
+   * @returns {boolean} True if regeneration is needed
+   */
+  _needsRegeneration(existingMainTitle, providerTitleGroups) {
+    // If main title doesn't exist, needs regeneration
+    if (!existingMainTitle || !existingMainTitle.lastUpdated) {
+      return true;
+    }
+
+    const mainLastUpdated = new Date(existingMainTitle.lastUpdated).getTime();
+
+    // Check if any provider title has been updated after main title
+    for (const group of providerTitleGroups) {
+      const providerLastUpdated = group.title.lastUpdated 
+        ? new Date(group.title.lastUpdated).getTime() 
+        : 0;
+      
+      if (providerLastUpdated > mainLastUpdated) {
+        return true; // At least one provider title is newer
+      }
+    }
+
+    return false; // All provider titles are older or equal to main title
+  }
+
+  /**
    * Generate main titles for a specific type (movies or tvshows)
    * @private
    * @param {string} type - Media type ('movies' or 'tvshows')
@@ -258,20 +287,44 @@ export class ProcessMainTitlesJob extends BaseJob {
       return 0;
     }
 
-    this.logger.info(`Generating ${providerTitlesByTMDB.size} main ${type} titles...`);
-
-    const uniqueTMDBIds = Array.from(providerTitlesByTMDB.keys());
-    const mainTitles = [];
-    let processedCount = 0;
-
-    // Load existing main titles to preserve createdAt timestamps
+    // Load existing main titles to preserve createdAt timestamps and check for regeneration needs
     const existingMainTitles = this.data.get('main', `${type}.json`) || [];
     const existingMainTitleMap = new Map(
       existingMainTitles.map(t => [t.title_id, t])
     );
 
+    // Filter titles that need regeneration
+    const uniqueTMDBIds = Array.from(providerTitlesByTMDB.keys());
+    const titlesToProcess = [];
+    let skippedCount = 0;
+    
+    for (const tmdbId of uniqueTMDBIds) {
+      const providerTitleGroups = providerTitlesByTMDB.get(tmdbId);
+      const existingMainTitle = existingMainTitleMap.get(tmdbId);
+      
+      if (this._needsRegeneration(existingMainTitle, providerTitleGroups)) {
+        titlesToProcess.push(tmdbId);
+      } else {
+        skippedCount++;
+      }
+    }
+    
+    if (skippedCount > 0) {
+      this.logger.debug(`Skipping ${skippedCount} ${type} main titles (no provider updates since last generation)`);
+    }
+    
+    if (titlesToProcess.length === 0) {
+      this.logger.info(`No ${type} main titles need regeneration`);
+      return 0;
+    }
+    
+    this.logger.info(`Generating ${titlesToProcess.length} main ${type} titles (${skippedCount} skipped)...`);
+
+    const mainTitles = [];
+    let processedCount = 0;
+
     // Track remaining titles for progress
-    let totalRemaining = uniqueTMDBIds.length;
+    let totalRemaining = titlesToProcess.length;
 
     // Save callback for progress tracking
     const saveCallback = async () => {
@@ -292,8 +345,8 @@ export class ProcessMainTitlesJob extends BaseJob {
 
     try {
       // Process in batches
-      for (let i = 0; i < uniqueTMDBIds.length; i += batchSize) {
-        const batch = uniqueTMDBIds.slice(i, i + batchSize);
+      for (let i = 0; i < titlesToProcess.length; i += batchSize) {
+        const batch = titlesToProcess.slice(i, i + batchSize);
 
         await Promise.all(batch.map(async (tmdbId) => {
           const providerTitleGroups = providerTitlesByTMDB.get(tmdbId);
@@ -316,13 +369,13 @@ export class ProcessMainTitlesJob extends BaseJob {
           }
         }));
 
-        totalRemaining = uniqueTMDBIds.length - processedCount;
+        totalRemaining = titlesToProcess.length - processedCount;
         this.tmdbProvider.updateProgress(progressKey, totalRemaining);
 
         // Log progress
-        if ((i + batchSize) % 100 === 0 || i + batchSize >= uniqueTMDBIds.length) {
+        if ((i + batchSize) % 100 === 0 || i + batchSize >= titlesToProcess.length) {
           this.logger.debug(
-            `Progress: ${Math.min(i + batchSize, uniqueTMDBIds.length)}/${uniqueTMDBIds.length} ` +
+            `Progress: ${Math.min(i + batchSize, titlesToProcess.length)}/${titlesToProcess.length} ` +
             `${type} main titles processed`
           );
         }
