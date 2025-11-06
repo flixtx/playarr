@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   Box,
   Button,
@@ -12,6 +12,21 @@ function CleanupRulesForm({ provider, onSave, onCancel }) {
   const [rules, setRules] = useState(provider.cleanup || {});
   const [newPattern, setNewPattern] = useState('');
   const [newReplacement, setNewReplacement] = useState('');
+
+  const handleSave = useCallback(() => {
+    onSave({
+      ...provider,
+      cleanup: rules
+    });
+  }, [rules, provider, onSave]);
+
+  // Expose save handler
+  useEffect(() => {
+    CleanupRulesForm.saveHandler = handleSave;
+    return () => {
+      CleanupRulesForm.saveHandler = null;
+    };
+  }, [handleSave]);
 
   const handleAddRule = () => {
     if (newPattern && newReplacement) {
@@ -42,19 +57,6 @@ function CleanupRulesForm({ provider, onSave, onCancel }) {
       newRules[oldPattern] = value;
     }
     setRules(newRules);
-  };
-
-  const handleReset = () => {
-    setRules(provider.cleanup || {});
-    setNewPattern('');
-    setNewReplacement('');
-  };
-
-  const handleSave = () => {
-    onSave({
-      ...provider,
-      cleanup: rules
-    });
   };
 
   return (
@@ -113,42 +115,11 @@ function CleanupRulesForm({ provider, onSave, onCancel }) {
         </Box>
       </Card>
 
-      {/* Action Buttons */}
-      <Box sx={{
-        display: 'flex',
-        gap: 2,
-        justifyContent: 'flex-end',
-        mt: 2,
-        mb: 4,
-        position: 'sticky',
-        bottom: 0,
-        bgcolor: 'background.paper',
-        pt: 2,
-        borderTop: 1,
-        borderColor: 'divider'
-      }}>
-        <Button
-          variant="outlined"
-          onClick={onCancel}
-        >
-          Cancel
-        </Button>
-        <Button
-          variant="outlined"
-          onClick={handleReset}
-        >
-          Reset
-        </Button>
-        <Button
-          variant="contained"
-          color="primary"
-          onClick={handleSave}
-        >
-          Save Changes
-        </Button>
-      </Box>
     </Box>
   );
 }
+
+// Expose save handler via ref
+CleanupRulesForm.saveHandler = null;
 
 export default CleanupRulesForm;

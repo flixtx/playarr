@@ -5,7 +5,6 @@ import CloseIcon from '@mui/icons-material/Close';
 import SettingsUsers from './settings/SettingsUsers';
 import SettingsGeneral from './settings/SettingsGeneral';
 import SettingsIPTVProviders from './settings/SettingsIPTVProviders';
-import SettingsStatistics from './settings/SettingsStatistics';
 import { setActiveTab } from '../store/slices/settingsSlice';
 
 function TabPanel({ children, value, index }) {
@@ -54,7 +53,6 @@ const Settings = ({ open, onClose }) => {
               <Tab label="Users" />
               <Tab label="General" />
               <Tab label="IPTV Providers" />
-              <Tab label="Statistics" />
             </Tabs>
           </Box>
 
@@ -68,10 +66,6 @@ const Settings = ({ open, onClose }) => {
 
           <TabPanel value={activeTab} index={2}>
             <SettingsIPTVProviders />
-          </TabPanel>
-
-          <TabPanel value={activeTab} index={3}>
-            <SettingsStatistics />
           </TabPanel>
 
           {/* TMDBWatchlistImport component kept for potential future use */}

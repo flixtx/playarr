@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Box, TextField, Button, CircularProgress } from '@mui/material';
+import { Box, TextField, Button, CircularProgress, InputAdornment, IconButton, Tooltip } from '@mui/material';
 import SaveIcon from '@mui/icons-material/Save';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 import axiosInstance from '../../config/axios';
 import { API_ENDPOINTS } from '../../config/api';
 
@@ -8,6 +10,7 @@ const SettingsGeneral = () => {
     const [tmdbApiKey, setTmdbApiKey] = useState('');
     const [isSaving, setIsSaving] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
+    const [showApiKey, setShowApiKey] = useState(false);
 
     // Fetch TMDB API key from backend on mount
     useEffect(() => {
@@ -47,7 +50,22 @@ const SettingsGeneral = () => {
                     value={tmdbApiKey}
                     onChange={(e) => setTmdbApiKey(e.target.value)}
                     fullWidth
-                    type="password"
+                    type={showApiKey ? 'text' : 'password'}
+                    InputProps={{
+                        endAdornment: (
+                            <InputAdornment position="end">
+                                <Tooltip title={showApiKey ? 'Hide API key' : 'Show API key'}>
+                                    <IconButton
+                                        onClick={() => setShowApiKey(!showApiKey)}
+                                        edge="end"
+                                        aria-label="toggle api key visibility"
+                                    >
+                                        {showApiKey ? <VisibilityOffIcon /> : <VisibilityIcon />}
+                                    </IconButton>
+                                </Tooltip>
+                            </InputAdornment>
+                        )
+                    }}
                 />
                 <Button
                     variant="contained"

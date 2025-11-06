@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Box,
   Typography,
@@ -10,13 +10,32 @@ import {
   ListItemSecondaryAction,
   Grid,
   Switch,
+  TextField,
+  InputAdornment,
+  IconButton,
 } from '@mui/material';
+import { Search as SearchIcon, Clear as ClearIcon } from '@mui/icons-material';
 import { updateIPTVProviderCategory } from './utils';
 
 function ExcludedCategoriesForm({ provider, categoryType, categories, loading, onCategoryUpdate }) {
   const [error, setError] = useState(null);
   const [localCategories, setLocalCategories] = useState(categories || []);
-  const filteredCategories = localCategories?.filter(cat => cat.type === categoryType) || [];
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Filter categories by type and search query
+  const filteredCategories = useMemo(() => {
+    let filtered = localCategories?.filter(cat => cat.type === categoryType) || [];
+    
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase().trim();
+      filtered = filtered.filter(cat => {
+        const name = (cat.category_name || cat.name || cat.key || '').toLowerCase();
+        return name.includes(query);
+      });
+    }
+    
+    return filtered;
+  }, [localCategories, categoryType, searchQuery]);
 
   // Update local state when categories prop changes
   React.useEffect(() => {
@@ -116,17 +135,54 @@ function ExcludedCategoriesForm({ provider, categoryType, categories, loading, o
     </List>
   );
 
+  const handleClearSearch = () => {
+    setSearchQuery('');
+  };
+
   return (
     <Box>
       <Grid container spacing={2}>
         <Grid item xs={12}>
-          <Typography variant="subtitle2" gutterBottom>
-            Categories
-          </Typography>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+            <Typography variant="subtitle2">
+              Categories
+            </Typography>
+          </Box>
+          
+          {/* Search Filter */}
+          <TextField
+            fullWidth
+            placeholder="Search categories..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            size="small"
+            sx={{ mb: 2 }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon />
+                </InputAdornment>
+              ),
+              endAdornment: searchQuery && (
+                <InputAdornment position="end">
+                  <IconButton
+                    size="small"
+                    onClick={handleClearSearch}
+                    edge="end"
+                  >
+                    <ClearIcon fontSize="small" />
+                  </IconButton>
+                </InputAdornment>
+              ),
+            }}
+          />
+
           {filteredCategories.length === 0 ? (
             <Paper variant="outlined" sx={{ p: 2 }}>
               <Typography color="textSecondary" sx={{ fontStyle: 'italic' }}>
-                No categories available
+                {searchQuery.trim() 
+                  ? `No categories found matching "${searchQuery}"` 
+                  : 'No categories available'}
               </Typography>
             </Paper>
           ) : (

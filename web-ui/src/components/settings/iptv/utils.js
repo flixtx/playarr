@@ -62,6 +62,11 @@ export const updateIPTVProviderCategory = async (providerId, categoryId, categor
   return response.data;
 };
 
+export const fetchIPTVProviderIgnoredTitles = async (providerId) => {
+  const response = await axiosInstance.get(API_ENDPOINTS.providerIgnoredTitles(providerId));
+  return response.data;
+};
+
 export const fetchTMDBProviders = async () => {
   try {
     const response = await axiosInstance.get(`${API_ENDPOINTS.providers}/tmdb`);

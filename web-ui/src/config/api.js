@@ -27,6 +27,7 @@ export const API_ENDPOINTS = {
     providers: `/iptv/providers`,
     providerCategories: (providerId) => `/iptv/providers/${providerId}/categories`,
     providerStatus: (providerId) => `/iptv/providers/${providerId}/status`,
+    providerIgnoredTitles: (providerId) => `/iptv/providers/${providerId}/ignored`,
 
     // TMDB endpoints
     tmdb: {

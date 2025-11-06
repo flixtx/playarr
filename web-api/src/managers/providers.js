@@ -33,6 +33,75 @@ class ProvidersManager {
   }
 
   /**
+   * Get ignored titles for a specific provider
+   * Reads from data/titles/{providerId}.ignored.json
+   * Enriches with title information from provider's titles data
+   * @param {string} providerId - Provider ID
+   * @returns {Promise<{response: object, statusCode: number}>}
+   */
+  async getIgnoredTitles(providerId) {
+    try {
+      // Validate provider exists
+      const providerResult = await this.getProvider(providerId);
+      if (providerResult.statusCode !== 200) {
+        return {
+          response: { error: 'Provider not found' },
+          statusCode: 404,
+        };
+      }
+
+      // Load ignored titles from collection
+      const collectionName = `${providerId}.ignored`;
+      const ignoredTitles = await this._database.getDataObject(collectionName);
+
+      if (!ignoredTitles || typeof ignoredTitles !== 'object') {
+        return {
+          response: [],
+          statusCode: 200,
+        };
+      }
+
+      // Get provider titles data to enrich ignored titles with name and year
+      const providerTitlesCollection = `${providerId}.titles`;
+      const providerTitlesArray = await this._database.getDataList(providerTitlesCollection);
+      
+      // Create a Map keyed by title_key for quick lookup
+      const providerTitlesMap = new Map();
+      if (Array.isArray(providerTitlesArray)) {
+        for (const title of providerTitlesArray) {
+          if (title.title_key) {
+            providerTitlesMap.set(title.title_key, title);
+          }
+        }
+      }
+
+      // Transform to array format: [{ title_key, issue, name, year }]
+      const ignoredList = Object.entries(ignoredTitles).map(([titleKey, issue]) => {
+        const titleData = providerTitlesMap.get(titleKey);
+        const year = titleData?.release_date ? new Date(titleData.release_date).getFullYear() : null;
+        
+        return {
+          title_key: titleKey,
+          issue: issue || 'Unknown issue',
+          name: titleData?.title || null,
+          year: year || null
+        };
+      });
+
+      return {
+        response: ignoredList,
+        statusCode: 200,
+      };
+    } catch (error) {
+      logger.error(`Error getting ignored titles for provider ${providerId}:`, error);
+      return {
+        response: { error: 'Failed to get ignored titles' },
+        statusCode: 500,
+      };
+    }
+  }
+
+  /**
    * Normalize provider URLs
    */
   _normalizeUrls(providerData, existingProvider = null) {

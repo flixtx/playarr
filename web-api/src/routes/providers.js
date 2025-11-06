@@ -148,6 +148,21 @@ class ProvidersRouter {
         return res.status(500).json({ error: 'Failed to delete provider' });
       }
     });
+
+    /**
+     * GET /api/iptv/providers/:provider_id/ignored
+     * Get ignored titles for a specific provider
+     */
+    this.router.get('/:provider_id/ignored', this._requireAuth, async (req, res) => {
+      try {
+        const { provider_id } = req.params;
+        const result = await this._providersManager.getIgnoredTitles(provider_id);
+        return res.status(result.statusCode).json(result.response);
+      } catch (error) {
+        console.error('Get ignored titles error:', error);
+        return res.status(500).json({ error: 'Failed to get ignored titles' });
+      }
+    });
   }
 }
 

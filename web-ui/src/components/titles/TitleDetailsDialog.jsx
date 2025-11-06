@@ -26,6 +26,7 @@ import SimilarTitles from './SimilarTitles';
 import axiosInstance from '../../config/axios';
 import { API_ENDPOINTS } from '../../config/api';
 import { API_URL } from '../../config/index';
+import { authService } from '../../services/auth';
 
 // Base64 encoded placeholder image (1x1 transparent pixel)
 const PLACEHOLDER_IMAGE = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
@@ -122,6 +123,7 @@ const TitleDetailsDialog = ({ open, onClose, title, onWatchlistToggle, onSimilar
     const [similarTitles, setSimilarTitles] = useState([]);
     const [loadingSimilar, setLoadingSimilar] = useState(false);
     const [fullTitleDetails, setFullTitleDetails] = useState(null);
+    const [apiKey, setApiKey] = useState(null);
 
     useEffect(() => {
         if (!open || !title?.key) return;
@@ -150,6 +152,21 @@ const TitleDetailsDialog = ({ open, onClose, title, onWatchlistToggle, onSimilar
         fetchDetails();
     }, [open, title?.key]);
 
+    // Fetch API key when dialog opens
+    useEffect(() => {
+        if (open) {
+            const fetchApiKey = async () => {
+                try {
+                    const profile = await authService.getProfile();
+                    setApiKey(profile.api_key);
+                } catch (error) {
+                    console.error('Error fetching API key:', error);
+                }
+            };
+            fetchApiKey();
+        }
+    }, [open]);
+
     useEffect(() => {
         // Set the first season as selected when title changes or streams load
         const details = fullTitleDetails || title;
@@ -159,6 +176,16 @@ const TitleDetailsDialog = ({ open, onClose, title, onWatchlistToggle, onSimilar
             setSelectedSeason(seasons[0]);
         }
     }, [fullTitleDetails, title]);
+
+    // Update fullTitleDetails watchlist status when title prop changes
+    useEffect(() => {
+        if (fullTitleDetails && title && fullTitleDetails.key === title.key && fullTitleDetails.watchlist !== title.watchlist) {
+            setFullTitleDetails(prev => ({
+                ...prev,
+                watchlist: title.watchlist
+            }));
+        }
+    }, [title, fullTitleDetails]);
 
     const handleSeasonChange = (season) => {
         setSelectedSeason(season);
@@ -171,6 +198,20 @@ const TitleDetailsDialog = ({ open, onClose, title, onWatchlistToggle, onSimilar
 
     const handleStreamDownload = async (titleId, seasonNumber = null, episodeNumber = null) => {
         try {
+            // Get API key if not already loaded
+            let userApiKey = apiKey;
+            if (!userApiKey) {
+                try {
+                    const profile = await authService.getProfile();
+                    userApiKey = profile.api_key;
+                    setApiKey(userApiKey);
+                } catch (error) {
+                    console.error('Error fetching API key:', error);
+                    alert('Unable to get API key. Please try again.');
+                    return;
+                }
+            }
+
             let streamUrl;
             if (seasonNumber !== null && episodeNumber !== null) {
                 // Show episode
@@ -192,6 +233,10 @@ const TitleDetailsDialog = ({ open, onClose, title, onWatchlistToggle, onSimilar
                 // Relative URL - use endpoint directly (it already starts with /)
                 fullUrl = streamUrl;
             }
+
+            // Append API key as query parameter
+            const separator = fullUrl.includes('?') ? '&' : '?';
+            fullUrl = `${fullUrl}${separator}api_key=${encodeURIComponent(userApiKey)}`;
 
             window.open(fullUrl, '_blank');
         } catch (error) {

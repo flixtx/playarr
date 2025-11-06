@@ -1,7 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
-  Button,
   TextField,
   FormControl,
   InputLabel,
@@ -17,7 +16,6 @@ import {
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
-import DragHandleIcon from '@mui/icons-material/DragHandle';
 
 function ProviderDetailsForm({ provider, onSave, onCancel }) {
   const [formData, setFormData] = useState({
@@ -27,10 +25,39 @@ function ProviderDetailsForm({ provider, onSave, onCancel }) {
     password: '',
     type: 'xtream',
     enabled: true,
-    priority: 1,
     cleanup: {}
   });
   const [newUrl, setNewUrl] = useState('');
+
+  const handleSubmit = useCallback((e) => {
+    if (e) e.preventDefault();
+
+    // For Xtream: first URL goes to api_url, all URLs go to streams_urls
+    // For AGTV: single URL to api_url, streams_urls array limited to 1
+    const isXtream = formData.type.toLowerCase() === 'xtream';
+    const urls = formData.urls.filter(url => url.trim() !== '');
+
+    const data = {
+      id: formData.id,
+      streams_urls: isXtream ? urls : (urls.length > 0 ? [urls[0]] : []),
+      api_url: urls.length > 0 ? urls[0] : '',
+      username: formData.username,
+      password: formData.password,
+      type: formData.type.toLowerCase(),
+      enabled: formData.enabled,
+      cleanup: formData.cleanup || {}
+    };
+
+    onSave(data);
+  }, [formData, onSave]);
+
+  // Expose save handler
+  useEffect(() => {
+    ProviderDetailsForm.saveHandler = handleSubmit;
+    return () => {
+      ProviderDetailsForm.saveHandler = null;
+    };
+  }, [handleSubmit]);
 
   useEffect(() => {
     if (provider) {
@@ -44,7 +71,6 @@ function ProviderDetailsForm({ provider, onSave, onCancel }) {
         password: provider.password || '',
         type: provider.type || 'xtream',
         enabled: provider.enabled ?? true,
-        priority: provider.priority || 1,
         cleanup: provider.cleanup || {}
       });
     } else {
@@ -56,7 +82,6 @@ function ProviderDetailsForm({ provider, onSave, onCancel }) {
         password: '',
         type: 'xtream',
         enabled: true,
-        priority: 1,
         cleanup: {}
       });
       setNewUrl('');
@@ -78,14 +103,6 @@ function ProviderDetailsForm({ provider, onSave, onCancel }) {
     });
   };
 
-  const handlePriorityChange = (e) => {
-    const value = parseInt(e.target.value) || 999;
-    setFormData({
-      ...formData,
-      priority: value,
-    });
-  };
-
   const handleAddUrl = () => {
     if (newUrl.trim()) {
       setFormData({
@@ -102,42 +119,6 @@ function ProviderDetailsForm({ provider, onSave, onCancel }) {
       ...formData,
       urls: newUrls
     });
-  };
-
-  const handleMoveUrl = (index, direction) => {
-    if ((direction === 'up' && index === 0) || (direction === 'down' && index === formData.urls.length - 1)) {
-      return;
-    }
-    const newUrls = [...formData.urls];
-    const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    [newUrls[index], newUrls[targetIndex]] = [newUrls[targetIndex], newUrls[index]];
-    setFormData({
-      ...formData,
-      urls: newUrls
-    });
-  };
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-
-    // For Xtream: first URL goes to api_url, all URLs go to streams_urls
-    // For AGTV: single URL to api_url, streams_urls array limited to 1
-    const isXtream = formData.type.toLowerCase() === 'xtream';
-    const urls = formData.urls.filter(url => url.trim() !== '');
-
-    const data = {
-      id: formData.id,
-      streams_urls: isXtream ? urls : (urls.length > 0 ? [urls[0]] : []),
-      api_url: urls.length > 0 ? urls[0] : '',
-      username: formData.username,
-      password: formData.password,
-      type: formData.type.toLowerCase(),
-      enabled: formData.enabled,
-      priority: formData.priority,
-      cleanup: formData.cleanup || {}
-    };
-
-    onSave(data);
   };
 
   const isXtream = formData.type?.toLowerCase() === 'xtream';
@@ -204,37 +185,15 @@ function ProviderDetailsForm({ provider, onSave, onCancel }) {
                   <ListItem
                     key={index}
                     secondaryAction={
-                      <Box sx={{ display: 'flex', gap: 0.5 }}>
-                        {index > 0 && (
-                          <IconButton
-                            edge="end"
-                            size="small"
-                            onClick={() => handleMoveUrl(index, 'up')}
-                            title="Move up"
-                          >
-                            <DragHandleIcon sx={{ transform: 'rotate(-90deg)' }} />
-                          </IconButton>
-                        )}
-                        {index < formData.urls.length - 1 && (
-                          <IconButton
-                            edge="end"
-                            size="small"
-                            onClick={() => handleMoveUrl(index, 'down')}
-                            title="Move down"
-                          >
-                            <DragHandleIcon sx={{ transform: 'rotate(90deg)' }} />
-                          </IconButton>
-                        )}
-                        <IconButton
-                          edge="end"
-                          size="small"
-                          onClick={() => handleRemoveUrl(index)}
-                          color="error"
-                          title="Remove"
-                        >
-                          <DeleteIcon />
-                        </IconButton>
-                      </Box>
+                      <IconButton
+                        edge="end"
+                        size="small"
+                        onClick={() => handleRemoveUrl(index)}
+                        color="error"
+                        title="Remove"
+                      >
+                        <DeleteIcon />
+                      </IconButton>
                     }
                     sx={{
                       bgcolor: index === 0 ? 'action.selected' : 'transparent',
@@ -287,17 +246,6 @@ function ProviderDetailsForm({ provider, onSave, onCancel }) {
         fullWidth
         required
       />
-      <TextField
-        name="priority"
-        label="Priority"
-        type="number"
-        value={formData.priority}
-        onChange={handlePriorityChange}
-        fullWidth
-        required
-        inputProps={{ min: 1 }}
-        helperText="Lower number means higher priority (1 is highest)"
-      />
       <FormControlLabel
         control={
           <Checkbox
@@ -308,31 +256,11 @@ function ProviderDetailsForm({ provider, onSave, onCancel }) {
         }
         label="Enabled"
       />
-      <Box sx={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
-        <Button
-          onClick={onCancel}
-          variant="outlined"
-        >
-          Cancel
-        </Button>
-        <Button
-          onClick={handleSubmit}
-          variant="contained"
-          color="primary"
-          disabled={
-            (isNewProvider && !formData.id) ||
-            formData.urls.length === 0 ||
-            !formData.username ||
-            !formData.password ||
-            !formData.type ||
-            !formData.priority
-          }
-        >
-          Save Changes
-        </Button>
-      </Box>
     </Box>
   );
 }
+
+// Expose save handler via static property
+ProviderDetailsForm.saveHandler = null;
 
 export default ProviderDetailsForm;

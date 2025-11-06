@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
+  Grid,
   Card,
   CardContent,
   Typography,
   CircularProgress,
-  Snackbar,
   Alert,
+  Dialog,
+  DialogTitle,
+  DialogContent,
   Tabs,
   Tab,
 } from '@mui/material';
@@ -14,13 +17,19 @@ import {
   fetchIPTVProviders,
   saveIPTVProvider,
   deleteIPTVProvider,
-  fetchIPTVProviderCategories,
-  updateIPTVProviderPriorities
+  fetchIPTVProviderCategories
 } from './iptv/utils';
-import ProviderList from './iptv/ProviderList';
 import ProviderDetailsForm from './iptv/ProviderDetailsForm';
 import CleanupRulesForm from './iptv/CleanupRulesForm';
 import ExcludedCategoriesForm from './iptv/ExcludedCategoriesForm';
+import IgnoredTitlesForm from './iptv/IgnoredTitlesForm';
+import AddIcon from '@mui/icons-material/Add';
+import EditIcon from '@mui/icons-material/Edit';
+import DeleteIcon from '@mui/icons-material/Delete';
+import CloseIcon from '@mui/icons-material/Close';
+import SaveIcon from '@mui/icons-material/Save';
+import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
 
 function SettingsIPTVProviders() {
   const [providers, setProviders] = useState([]);
@@ -28,18 +37,11 @@ function SettingsIPTVProviders() {
   const [isNewProvider, setIsNewProvider] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+  const [success, setSuccess] = useState(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('details');
   const [categories, setCategories] = useState(null);
   const [loadingCategories, setLoadingCategories] = useState(false);
-
-  const showSnackbar = useCallback((message, severity = 'success') => {
-    setSnackbar({ open: true, message, severity });
-  }, []);
-
-  const handleCloseSnackbar = () => {
-    setSnackbar({ ...snackbar, open: false });
-  };
 
   const loadProviders = useCallback(async () => {
     try {
@@ -50,11 +52,10 @@ function SettingsIPTVProviders() {
     } catch (error) {
       console.error('Error fetching providers:', error);
       setError('Failed to load providers. Please try again later.');
-      showSnackbar('Failed to load providers', 'error');
     } finally {
       setLoading(false);
     }
-  }, [showSnackbar]);
+  }, []);
 
   const loadCategories = useCallback(async (providerId) => {
     if (!providerId) return;
@@ -65,11 +66,11 @@ function SettingsIPTVProviders() {
       setCategories(data);
     } catch (error) {
       console.error('Error fetching categories:', error);
-      showSnackbar('Failed to load categories', 'error');
+      setError('Failed to load categories');
     } finally {
       setLoadingCategories(false);
     }
-  }, [showSnackbar]);
+  }, []);
 
   useEffect(() => {
     loadProviders();
@@ -88,38 +89,48 @@ function SettingsIPTVProviders() {
     setSelectedProvider(provider);
     setIsNewProvider(false);
     setActiveTab('details');
+    setDialogOpen(true);
   };
 
   const handleAdd = () => {
     setSelectedProvider({
       type: 'xtream',
       enabled: true,
-      priority: providers.length + 1,
       cleanup: {}
     });
     setIsNewProvider(true);
     setActiveTab('details');
+    setDialogOpen(true);
+  };
+
+  const handleCloseDialog = () => {
+    setDialogOpen(false);
+    setSelectedProvider(null);
+    setIsNewProvider(false);
+    setActiveTab('details');
+    setCategories(null);
   };
 
   const handleDelete = async (providerId) => {
     try {
       await deleteIPTVProvider(providerId);
-      showSnackbar('Provider deleted successfully');
+      setSuccess('Provider deleted successfully');
+      setTimeout(() => setSuccess(null), 3000);
       if (selectedProvider?.id === providerId) {
-        setSelectedProvider(null);
-        setCategories(null);
+        handleCloseDialog();
       }
       loadProviders();
     } catch (error) {
       console.error('Error deleting provider:', error);
-      showSnackbar('Failed to delete provider', 'error');
+      setError('Failed to delete provider');
     }
   };
 
   const handleSave = async (providerData) => {
     try {
       const savedProvider = await saveIPTVProvider(providerData);
-      showSnackbar(isNewProvider ? 'Provider added successfully' : 'Provider updated successfully');
+      setSuccess(isNewProvider ? 'Provider added successfully' : 'Provider updated successfully');
+      setTimeout(() => setSuccess(null), 3000);
 
       // Update local state instead of making another API call
       if (isNewProvider) {
@@ -132,48 +143,44 @@ function SettingsIPTVProviders() {
 
       setSelectedProvider(savedProvider);
       setIsNewProvider(false);
+      handleCloseDialog();
 
-      // Reload categories if needed
-      if (savedProvider.type?.toLowerCase() === 'xtream') {
-        loadCategories(savedProvider.id);
-      }
+      // Reload providers to get fresh data
+      loadProviders();
     } catch (error) {
       console.error('Error saving provider:', error);
-      showSnackbar('Failed to save provider', 'error');
+      setError('Failed to save provider');
     }
   };
 
-  const handleCloseDialog = () => {
-    setSelectedProvider(null);
-    setIsNewProvider(false);
-    setActiveTab('details');
-    setCategories(null);
+  const handleSaveFromHeader = () => {
+    // Trigger save based on active tab
+    switch (activeTab) {
+      case 'details':
+        if (ProviderDetailsForm.saveHandler) {
+          ProviderDetailsForm.saveHandler();
+        }
+        break;
+      case 'cleanup':
+        if (CleanupRulesForm.saveHandler) {
+          CleanupRulesForm.saveHandler();
+        }
+        break;
+      case 'movies':
+      case 'tvshows':
+        // ExcludedCategoriesForm - changes are auto-saved, so just close
+        handleCloseDialog();
+        break;
+      case 'ignored':
+        // IgnoredTitlesForm is read-only, so just close
+        handleCloseDialog();
+        break;
+      default:
+        handleCloseDialog();
+    }
   };
 
-  const handleDragEnd = useCallback(async (result) => {
-    if (!result.destination) return;
-
-    const items = Array.from(providers);
-    const [reorderedItem] = items.splice(result.source.index, 1);
-    items.splice(result.destination.index, 0, reorderedItem);
-
-    // Update priorities based on new order
-    const updatedProviders = items.map((provider, index) => ({
-      ...provider,
-      priority: index + 1
-    }));
-
-    setProviders(updatedProviders);
-
-    try {
-      await updateIPTVProviderPriorities({ providers: updatedProviders });
-    } catch (error) {
-      console.error('Error updating provider priorities:', error);
-      showSnackbar('Failed to update provider priorities', 'error');
-      // Revert to original order on error
-      loadProviders();
-    }
-  }, [providers, showSnackbar, loadProviders]);
+  // Removed handleDragEnd - priority support removed
 
   const handleTabChange = (event, newValue) => {
     setActiveTab(newValue);
@@ -219,6 +226,22 @@ function SettingsIPTVProviders() {
           key="tvshows"
           value="tvshows"
           label="TV Shows"
+          sx={{
+            '&.Mui-selected': {
+              color: 'primary.main',
+            }
+          }}
+        />
+      );
+    }
+
+    // Ignored Titles tab available for all providers (not just Xtream)
+    if (!isNewProvider) {
+      tabs.push(
+        <Tab
+          key="ignored"
+          value="ignored"
+          label="Ignored Titles"
           sx={{
             '&.Mui-selected': {
               color: 'primary.main',
@@ -291,6 +314,15 @@ function SettingsIPTVProviders() {
           );
         }
         return null;
+      case 'ignored':
+        if (!isNewProvider) {
+          return (
+            <IgnoredTitlesForm
+              provider={selectedProvider}
+            />
+          );
+        }
+        return null;
       default:
         return null;
     }
@@ -298,73 +330,173 @@ function SettingsIPTVProviders() {
 
   if (loading) {
     return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '50vh' }}>
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px' }}>
         <CircularProgress />
       </Box>
     );
   }
 
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <Box display="flex" gap={2} sx={{ flex: 1, overflow: 'hidden' }}>
-        {/* Provider List */}
-        <Box flex={1} maxWidth={300} sx={{ overflowY: 'auto' }}>
-          <ProviderList
-            providers={providers}
-            selectedProvider={selectedProvider}
-            isNewProvider={isNewProvider}
-            onEdit={handleEdit}
-            onAdd={handleAdd}
-            onDelete={handleDelete}
-            onDragEnd={handleDragEnd}
-            onCloseDialog={handleCloseDialog}
-            error={error}
-          />
-        </Box>
+    <Box>
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
 
-        {/* Main Content */}
-        <Box flex={3} sx={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          {/* Tabs Header - Only show when a provider is selected */}
-          {selectedProvider && (
-            <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
-              <Tabs
-                value={activeTab}
-                onChange={handleTabChange}
-                variant="scrollable"
-                scrollButtons="auto"
-                TabIndicatorProps={{
-                  sx: { backgroundColor: 'primary.main' }
-                }}
-              >
-                {renderTabs()}
-              </Tabs>
-            </Box>
-          )}
+      {success && (
+        <Alert severity="success" sx={{ mb: 2 }} onClose={() => setSuccess(null)}>
+          {success}
+        </Alert>
+      )}
 
-          {/* Scrollable Content Area */}
-          <Box sx={{ flex: 1, overflowY: 'auto' }}>
-            <Box sx={{ p: 2, pb: 0 }}>
-              <Card>
-                <CardContent>
-                  {renderTabContent()}
+      <Box>
+        <Typography variant="h6" sx={{ mb: 3 }}>IPTV Provider Management</Typography>
+
+        <Grid container spacing={3}>
+          {/* Add New Provider Card */}
+          <Grid item xs={12} sm={6} md={4} lg={3}>
+            <Card
+              sx={{
+                height: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                border: '2px dashed',
+                borderColor: 'divider',
+                '&:hover': {
+                  borderColor: 'primary.main',
+                  bgcolor: 'action.hover'
+                }
+              }}
+              onClick={handleAdd}
+            >
+              <CardContent sx={{ textAlign: 'center', py: 4 }}>
+                <AddIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 1 }} />
+                <Typography variant="h6" color="text.secondary">
+                  Add New Provider
+                </Typography>
+              </CardContent>
+            </Card>
+          </Grid>
+
+          {/* Provider Cards */}
+          {providers.map((provider) => (
+            <Grid item xs={12} sm={6} md={4} lg={3} key={provider.id}>
+              <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+                <CardContent sx={{ flexGrow: 1 }}>
+                  {/* Title with Provider ID and Chips */}
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 1 }}>
+                    <Typography variant="h6" sx={{ fontFamily: 'monospace', flex: 1 }}>
+                      {provider.id}
+                    </Typography>
+                    <Box sx={{ display: 'flex', gap: 0.5, ml: 1 }}>
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          px: 1,
+                          py: 0.5,
+                          borderRadius: 1,
+                          bgcolor: 'primary.light',
+                          color: 'primary.contrastText',
+                          textTransform: 'capitalize'
+                        }}
+                      >
+                        {provider.type || 'Unknown'}
+                      </Typography>
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          px: 1,
+                          py: 0.5,
+                          borderRadius: 1,
+                          bgcolor: provider.enabled ? 'success.light' : 'error.light',
+                          color: provider.enabled ? 'success.contrastText' : 'error.contrastText'
+                        }}
+                      >
+                        {provider.enabled ? 'Enabled' : 'Disabled'}
+                      </Typography>
+                    </Box>
+                  </Box>
+
+                  {/* Action Buttons */}
+                  <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 0.5, mt: 2, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+                    <IconButton
+                      size="small"
+                      onClick={() => handleEdit(provider)}
+                      color="primary"
+                    >
+                      <EditIcon fontSize="small" />
+                    </IconButton>
+                    <IconButton
+                      size="small"
+                      onClick={() => handleDelete(provider.id)}
+                      color="error"
+                    >
+                      <DeleteIcon fontSize="small" />
+                    </IconButton>
+                  </Box>
                 </CardContent>
               </Card>
-              <Box sx={{ height: 80 }} />
-            </Box>
-          </Box>
-        </Box>
+            </Grid>
+          ))}
+        </Grid>
       </Box>
 
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={6000}
-        onClose={handleCloseSnackbar}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+      {/* Provider Form Dialog */}
+      <Dialog
+        open={dialogOpen}
+        onClose={handleCloseDialog}
+        maxWidth="lg"
+        fullWidth
+        fullScreen
       >
-        <Alert onClose={handleCloseSnackbar} severity={snackbar.severity}>
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
+        <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Typography variant="h6" component="span">
+            {isNewProvider ? 'Add New Provider' : `Edit Provider: ${selectedProvider?.id}`}
+          </Typography>
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            {(activeTab === 'details' || activeTab === 'cleanup') && (
+              <Tooltip title="Save Changes">
+                <IconButton
+                  onClick={handleSaveFromHeader}
+                  color="primary"
+                  size="small"
+                >
+                  <SaveIcon />
+                </IconButton>
+              </Tooltip>
+            )}
+            <Tooltip title="Close">
+              <IconButton
+                onClick={handleCloseDialog}
+                size="small"
+              >
+                <CloseIcon />
+              </IconButton>
+            </Tooltip>
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          {/* Tabs Header */}
+          <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+            <Tabs
+              value={activeTab}
+              onChange={handleTabChange}
+              variant="scrollable"
+              scrollButtons="auto"
+            >
+              {renderTabs()}
+            </Tabs>
+          </Box>
+
+          {/* Tab Content */}
+          <Box sx={{ mt: 2 }}>
+            {renderTabContent()}
+          </Box>
+        </DialogContent>
+      </Dialog>
     </Box>
   );
 }

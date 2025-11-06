@@ -20,18 +20,15 @@ class SettingsManager {
   /**
    * Read settings from collection
    * Uses DatabaseService collection-based methods
+   * Settings are stored as an object, not an array
    * @private
    * @returns {Promise<Object>} Settings object
    */
   async _readSettings() {
     try {
-      const settingsArray = await this._database.getDataList(this._settingsCollection);
-      // Convert array to object
-      const settings = {};
-      for (const setting of settingsArray) {
-        settings[setting.key] = setting.value;
-      }
-      return settings;
+      // Settings are stored as an object, not an array
+      const settings = await this._database.getDataObject(this._settingsCollection);
+      return settings || {};
     } catch (error) {
       logger.error(`Error reading settings: ${error.message}`);
       return {};
@@ -41,29 +38,14 @@ class SettingsManager {
   /**
    * Write settings to collection
    * Uses DatabaseService collection-based methods
+   * Settings are stored as an object, not an array
    * @private
    * @param {Object} settings - Settings object to write
    */
   async _writeSettings(settings) {
     try {
-      // Convert object to array format
-      const settingsArray = Object.entries(settings).map(([key, value]) => ({
-        key,
-        value,
-      }));
-
-      // Get existing settings
-      const existingSettings = await this._database.getDataList(this._settingsCollection);
-      
-      // Delete all existing
-      for (const setting of existingSettings) {
-        await this._database.deleteData(this._settingsCollection, { key: setting.key });
-      }
-      
-      // Insert all new
-      if (settingsArray.length > 0) {
-        await this._database.insertDataList(this._settingsCollection, settingsArray);
-      }
+      // Settings are stored as an object, write directly
+      await this._database.updateDataObject(this._settingsCollection, settings);
     } catch (error) {
       logger.error(`Error writing settings: ${error.message}`);
       throw error;
@@ -96,8 +78,11 @@ class SettingsManager {
    */
   async setSetting(key, value) {
     try {
+      // Read existing settings
       const settings = await this._readSettings();
+      // Update the specific key
       settings[key] = value;
+      // Write back (this merges/overwrites the entire object)
       await this._writeSettings(settings);
 
       return {
@@ -120,8 +105,12 @@ class SettingsManager {
    */
   async deleteSetting(key) {
     try {
-      // Delete directly from collection
-      await this._database.deleteData(this._settingsCollection, { key });
+      // Read current settings
+      const settings = await this._readSettings();
+      // Remove the key
+      delete settings[key];
+      // Write back
+      await this._writeSettings(settings);
       
       return {
         response: { success: true },

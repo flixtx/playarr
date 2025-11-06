@@ -80,12 +80,12 @@ const ProfileM3UEndpoint = ({ apiKey, showApiKey, maskApiKey, onCopyUrl }) => {
             }}
           >
             <Box component="span" sx={{ flex: 1, pr: 1 }}>
-              {window.location.origin}/api/playlist/shows?api_key={showApiKey ? apiKey : maskApiKey(apiKey)}
+              {window.location.origin}/api/playlist/tvshows?api_key={showApiKey ? apiKey : maskApiKey(apiKey)}
             </Box>
             <Tooltip title="Copy URL">
               <IconButton
                 size="small"
-                onClick={() => copyUrl(`${window.location.origin}/api/playlist/shows?api_key=${apiKey}`)}
+                onClick={() => copyUrl(`${window.location.origin}/api/playlist/tvshows?api_key=${apiKey}`)}
               >
                 <ContentCopyIcon fontSize="small" />
               </IconButton>
