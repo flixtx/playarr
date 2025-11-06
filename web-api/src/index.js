@@ -100,9 +100,9 @@ async function initialize() {
     const titlesManager = new TitlesManager(database, userManager);
     const settingsManager = new SettingsManager(database);
     const statsManager = new StatsManager(database);
-    const providersManager = new ProvidersManager(database, webSocketService);
+    const providersManager = new ProvidersManager(database, webSocketService, titlesManager);
     const categoriesManager = new CategoriesManager(database, providersManager);
-    const streamManager = new StreamManager(titlesManager);
+    const streamManager = new StreamManager(titlesManager, cacheService);
     const playlistManager = new PlaylistManager(titlesManager);
     const tmdbManager = new TMDBManager(settingsManager);
 
@@ -121,7 +121,7 @@ async function initialize() {
     const providersRouter = new ProvidersRouter(providersManager);
     const streamRouter = new StreamRouter(streamManager);
     const playlistRouter = new PlaylistRouter(playlistManager);
-    const cacheRouter = new CacheRouter(cacheService, fileStorage, titlesManager, statsManager, categoriesManager);
+    const cacheRouter = new CacheRouter(cacheService, fileStorage, titlesManager, statsManager, categoriesManager, database);
     const tmdbRouter = new TMDBRouter(tmdbManager);
     const healthcheckRouter = new HealthcheckRouter(fileStorage, settingsManager);
 
@@ -161,10 +161,13 @@ async function initialize() {
     logger.info('Socket.IO server initialized');
 
     // Start HTTP server
-    server.listen(PORT, () => {
+    server.listen(PORT, async () => {
       logger.info(`Server running on port ${PORT}`);
       logger.info(`API available at http://localhost:${PORT}/api`);
       logger.info(`Socket.IO available at ws://localhost:${PORT}/socket.io`);
+      
+      // Initialize API titles cache after server starts
+      await cacheRouter.initializeAPITitlesCache();
     });
   } catch (error) {
     logger.error('Failed to initialize application:', error);

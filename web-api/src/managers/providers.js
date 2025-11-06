@@ -16,10 +16,12 @@ class ProvidersManager {
   /**
    * @param {import('../services/database.js').DatabaseService} database - Database service instance
    * @param {import('../services/websocket.js').WebSocketService} webSocketService - WebSocket service instance
+   * @param {import('./titles.js').TitlesManager} titlesManager - Titles manager instance
    */
-  constructor(database, webSocketService) {
+  constructor(database, webSocketService, titlesManager) {
     this._database = database;
     this._webSocketService = webSocketService;
+    this._titlesManager = titlesManager;
     this._providersCollection = toCollectionName(DatabaseCollections.IPTV_PROVIDERS);
   }
 
@@ -226,6 +228,20 @@ class ProvidersManager {
       }
 
       const existingProvider = providers[providerIndex];
+
+      // Check if provider is being disabled
+      const wasEnabled = existingProvider.enabled !== false;
+      const willBeEnabled = providerData.enabled !== false;
+
+      // If provider is being disabled, remove it from all stream sources
+      if (wasEnabled && !willBeEnabled && this._titlesManager) {
+        try {
+          await this._titlesManager.removeProviderFromStreams(providerId);
+        } catch (error) {
+          // Log error but don't fail the provider update
+          logger.error(`Error removing provider ${providerId} from streams:`, error);
+        }
+      }
 
       // Normalize URLs
       this._normalizeUrls(providerData, existingProvider);

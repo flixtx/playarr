@@ -1,4 +1,7 @@
 import express from 'express';
+import { createLogger } from '../utils/logger.js';
+
+const logger = createLogger('CacheRouter');
 
 /**
  * Cache router for handling cache refresh endpoints
@@ -10,13 +13,15 @@ class CacheRouter {
    * @param {TitlesManager} titlesManager - Titles manager instance
    * @param {StatsManager} statsManager - Stats manager instance
    * @param {CategoriesManager} categoriesManager - Categories manager instance
+   * @param {DatabaseService} database - Database service instance
    */
-  constructor(cacheService, fileStorage, titlesManager, statsManager, categoriesManager) {
+  constructor(cacheService, fileStorage, titlesManager, statsManager, categoriesManager, database) {
     this._cacheService = cacheService;
     this._fileStorage = fileStorage;
     this._titlesManager = titlesManager;
     this._statsManager = statsManager;
     this._categoriesManager = categoriesManager;
+    this._database = database;
     this.router = express.Router();
     this._setupRoutes();
   }
@@ -27,70 +32,78 @@ class CacheRouter {
    */
   _setupRoutes() {
     /**
-     * POST /api/cache/refresh/titles
-     * Refresh titles cache (internal endpoint, called by Python engine)
-     * Invalidates cache via CacheService - FileStorageService will automatically re-cache on next read
+     * POST /api/cache/refresh/:key
+     * Refresh cache for a specific collection
+     * Supports:
+     * - Main collections: titles, stats, categories, users, settings, iptv-providers
+     * - Provider collections: {providerId}.titles, {providerId}.categories
+     * 
+     * Special handling for 'titles':
+     * - Refreshes regular titles cache
+     * - Also refreshes API titles cache (with provider URLs)
+     * 
+     * Examples:
+     * - POST /api/cache/refresh/titles
+     * - POST /api/cache/refresh/my-provider.titles
+     * - POST /api/cache/refresh/my-provider.categories
      */
-    this.router.post('/refresh/titles', async (req, res) => {
+    this.router.post('/refresh/:key', async (req, res) => {
       try {
-        // Invalidate cache for titles file directly via CacheService
-        // When FileStorageService reads this file next time:
-        // - Cache will be empty (cache miss)
-        // - FileStorageService reads from disk
-        // - FileStorageService automatically re-caches the fresh data
-        const titlesFilePath = this._fileStorage.getCollectionPath('titles');
-        this._cacheService.delete(titlesFilePath);
-
-        // Refresh titles in titles manager (clears Map transformation cache)
-        await this._titlesManager.refreshCache();
-
-        return res.status(200).json({ success: true, message: 'Titles cache refreshed' });
-      } catch (error) {
-        console.error('Refresh titles cache error:', error);
-        return res.status(500).json({ error: 'Failed to refresh titles cache' });
-      }
-    });
-
-    /**
-     * POST /api/cache/refresh/categories?provider={name}
-     * Refresh categories cache for a specific provider (internal endpoint, called by Python engine)
-     */
-    this.router.post('/refresh/categories', async (req, res) => {
-      try {
-        const { provider } = req.query;
-
-        if (!provider) {
-          return res.status(400).json({ error: 'Provider parameter is required' });
+        const { key } = req.params;
+        
+        if (!key) {
+          return res.status(400).json({ error: 'Collection key is required' });
         }
 
-        // Categories cache is handled by database service automatically
-        // File cache invalidation happens when files are written
+        // Invalidate cache for the collection
+        this._database.invalidateCollectionCache(key);
 
-        return res.status(200).json({
-          success: true,
-          message: `Categories cache refreshed for provider: ${provider}`,
+        // Special handling for titles: also refresh API titles cache
+        if (key === 'titles') {
+          await this._refreshAPITitlesCache();
+        }
+
+        return res.status(200).json({ 
+          success: true, 
+          message: `Cache refreshed for collection: ${key}` 
         });
       } catch (error) {
-        console.error('Refresh categories cache error:', error);
-        return res.status(500).json({ error: 'Failed to refresh categories cache' });
+        logger.error(`Refresh cache error for ${req.params.key}:`, error);
+        return res.status(500).json({ 
+          error: `Failed to refresh cache for collection: ${req.params.key}` 
+        });
       }
     });
+  }
 
-    /**
-     * POST /api/cache/refresh/stats
-     * Refresh stats cache (internal endpoint, called by Python engine)
-     */
-    this.router.post('/refresh/stats', async (req, res) => {
-      try {
-        // Stats cache is handled by database service automatically
-        // File cache invalidation happens when files are written
+  /**
+   * Refresh API titles cache (with provider URLs)
+   * Called when titles collection is refreshed
+   * @private
+   */
+  async _refreshAPITitlesCache() {
+    try {
+      const apiTitles = await this._titlesManager.getTitlesForAPI();
+      this._cacheService.set('titles-api', apiTitles);
+      logger.info(`Refreshed API titles cache: ${apiTitles.size} titles`);
+    } catch (error) {
+      logger.error('Error refreshing API titles cache:', error);
+      throw error;
+    }
+  }
 
-        return res.status(200).json({ success: true, message: 'Stats cache refreshed' });
-      } catch (error) {
-        console.error('Refresh stats cache error:', error);
-        return res.status(500).json({ error: 'Failed to refresh stats cache' });
-      }
-    });
+  /**
+   * Initialize API titles cache
+   * Called on startup after all services are initialized
+   */
+  async initializeAPITitlesCache() {
+    try {
+      await this._refreshAPITitlesCache();
+      logger.info('API titles cache initialized');
+    } catch (error) {
+      logger.error('Error initializing API titles cache:', error);
+      // Don't throw - allow startup to continue
+    }
   }
 }
 

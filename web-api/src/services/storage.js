@@ -274,6 +274,14 @@ class FileStorageService {
   }
 
   /**
+   * Invalidate cache for a specific file
+   * @param {string} filePath - File path to invalidate from cache
+   */
+  invalidateFileCache(filePath) {
+    this._cache.delete(filePath);
+  }
+
+  /**
    * Initialize file storage (ensure directories exist)
    */
   async initialize() {

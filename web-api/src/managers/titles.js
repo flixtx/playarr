@@ -86,6 +86,127 @@ class TitlesManager {
   }
 
   /**
+   * Get titles with stream sources transformed to provider URLs
+   * Returns a Map<titleKey, MainTitle> where sources are dictionaries of providerId -> url
+   * This is cached separately from regular titles for API consumption
+   * @returns {Promise<Map<string, MainTitle>>} Map of title_key to MainTitle with provider URLs
+   */
+  async getTitlesForAPI() {
+    try {
+      // Get main titles
+      const mainTitles = await this.getTitlesData();
+      if (!mainTitles || mainTitles.size === 0) {
+        logger.info('No main titles found for API transformation');
+        return new Map();
+      }
+
+      // Get all enabled providers to know which provider titles to load
+      const enabledProviders = await this._getEnabledProviders();
+      if (enabledProviders.size === 0) {
+        logger.info('No enabled providers found for API transformation');
+        return new Map();
+      }
+
+      // Load provider titles for all enabled providers
+      // Map structure: Map<providerId, Map<{type}-{tmdb_id}, providerTitle>>
+      const providerTitlesByProvider = new Map();
+      
+      for (const providerId of enabledProviders) {
+        const providerTitlesCollection = `${providerId}.titles`;
+        const providerTitlesArray = await this._database.getDataList(providerTitlesCollection);
+        
+        if (!providerTitlesArray || providerTitlesArray.length === 0) {
+          continue;
+        }
+
+        // Convert to Map keyed by {type}-{tmdb_id}
+        const providerTitlesMap = new Map();
+        for (const title of providerTitlesArray) {
+          if (title.tmdb_id && title.type) {
+            const key = `${title.type}-${title.tmdb_id}`;
+            providerTitlesMap.set(key, title);
+          }
+        }
+        
+        if (providerTitlesMap.size > 0) {
+          providerTitlesByProvider.set(providerId, providerTitlesMap);
+        }
+
+        // Invalidate provider titles cache after we're done with it
+        this._database.invalidateCollectionCache(providerTitlesCollection);
+      }
+
+      // Create transformed titles Map
+      const apiTitlesMap = new Map();
+
+      for (const [titleKey, titleData] of mainTitles.entries()) {
+        // Clone title data
+        const apiTitle = { ...titleData };
+        const streams = titleData.streams || {};
+        const transformedStreams = {};
+
+        // Transform each stream entry
+        for (const [streamId, streamData] of Object.entries(streams)) {
+          // Handle both array format and object format
+          let providerIds = [];
+          
+          if (Array.isArray(streamData)) {
+            // Legacy format: { "main": [array of provider IDs] }
+            providerIds = streamData;
+          } else if (streamData && typeof streamData === 'object') {
+            // New format: { "main": { "sources": [array] } } or { "S01-E01": { "sources": [...] } }
+            if (streamData.sources && Array.isArray(streamData.sources)) {
+              providerIds = streamData.sources;
+            }
+          }
+
+          if (providerIds.length === 0) {
+            continue;
+          }
+
+          // Build dictionary of providerId -> url
+          const sourcesDict = {};
+          
+          for (const providerId of providerIds) {
+            const providerTitlesMap = providerTitlesByProvider.get(providerId);
+            if (!providerTitlesMap) {
+              continue;
+            }
+
+            // Look up provider title by {type}-{tmdb_id}
+            const providerTitleKey = `${titleData.type}-${titleData.title_id}`;
+            const providerTitle = providerTitlesMap.get(providerTitleKey);
+            
+            if (!providerTitle || !providerTitle.streams) {
+              continue;
+            }
+
+            // Get URL for this stream ID from provider title
+            const streamUrl = providerTitle.streams[streamId];
+            if (streamUrl) {
+              sourcesDict[providerId] = streamUrl;
+            }
+          }
+
+          // Only add stream if we found at least one URL
+          if (Object.keys(sourcesDict).length > 0) {
+            transformedStreams[streamId] = { sources: sourcesDict };
+          }
+        }
+
+        apiTitle.streams = transformedStreams;
+        apiTitlesMap.set(titleKey, apiTitle);
+      }
+
+      logger.info(`Generated ${apiTitlesMap.size} API titles with provider URLs`);
+      return apiTitlesMap;
+    } catch (error) {
+      logger.error('Error generating API titles:', error);
+      return new Map();
+    }
+  }
+
+  /**
    * Get poster path URL
    * Matches Python's TMDBProvider.get_poster_path()
    * Note: _loadTmdbConfiguration() must be called first
@@ -649,11 +770,131 @@ class TitlesManager {
   }
 
   /**
-   * Refresh titles (called by Python engine via cache refresh endpoint)
-   * Database service handles cache invalidation automatically
+   * Remove a provider from all stream sources in main titles
+   * Called when a provider is disabled
+   * @param {string} providerId - Provider ID to remove from streams
+   * @returns {Promise<{removed: number, titlesUpdated: number}>} Statistics about the cleanup
    */
-  async refreshCache() {
-    // No-op - database service handles caching internally
+  async removeProviderFromStreams(providerId) {
+    try {
+      // Load provider titles to extract TMDB IDs
+      const providerTitlesCollection = `${providerId}.titles`;
+      const providerTitles = await this._database.getDataList(providerTitlesCollection);
+      
+      if (!providerTitles || providerTitles.length === 0) {
+        logger.info(`No titles found for provider ${providerId}`);
+        return { removed: 0, titlesUpdated: 0 };
+      }
+
+      // Extract TMDB IDs from provider titles
+      const tmdbIds = new Set();
+      for (const title of providerTitles) {
+        if (title.tmdb_id) {
+          tmdbIds.add(title.tmdb_id);
+        }
+      }
+
+      if (tmdbIds.size === 0) {
+        logger.info(`No TMDB IDs found in provider ${providerId} titles`);
+        return { removed: 0, titlesUpdated: 0 };
+      }
+
+      // Load main titles Map
+      const mainTitles = await this.getTitlesData();
+      if (!mainTitles || mainTitles.size === 0) {
+        logger.info('No main titles found');
+        return { removed: 0, titlesUpdated: 0 };
+      }
+
+      let titlesUpdated = 0;
+      let streamsRemoved = 0;
+
+      // Iterate through main titles and remove provider from streams
+      for (const [titleKey, titleData] of mainTitles.entries()) {
+        const titleId = titleData.title_id;
+        
+        // Check if this title matches any TMDB ID from the provider
+        if (!tmdbIds.has(titleId)) {
+          continue;
+        }
+
+        const streams = titleData.streams || {};
+        let titleModified = false;
+
+        // Process each stream entry
+        for (const [streamKey, streamData] of Object.entries(streams)) {
+          if (!streamData || typeof streamData !== 'object') {
+            continue;
+          }
+
+          // Handle new format: { sources: [providerIds] }
+          if (streamData.sources && Array.isArray(streamData.sources)) {
+            const originalLength = streamData.sources.length;
+            streamData.sources = streamData.sources.filter(id => id !== providerId);
+            
+            if (streamData.sources.length !== originalLength) {
+              streamsRemoved += (originalLength - streamData.sources.length);
+              titleModified = true;
+            }
+          }
+        }
+
+        if (titleModified) {
+          titlesUpdated++;
+          // Update lastUpdated timestamp
+          titleData.lastUpdated = new Date().toISOString();
+        }
+      }
+
+      // Save updated titles to disk
+      if (titlesUpdated > 0) {
+        await this._saveTitlesData(mainTitles);
+        logger.info(`Removed provider ${providerId} from ${streamsRemoved} streams across ${titlesUpdated} titles`);
+      }
+
+      // Invalidate provider titles cache after we're done with it
+      this._database.invalidateCollectionCache(providerTitlesCollection);
+
+      return { removed: streamsRemoved, titlesUpdated };
+    } catch (error) {
+      logger.error(`Error removing provider ${providerId} from streams:`, error);
+      // Don't throw - allow provider update to complete
+      return { removed: 0, titlesUpdated: 0 };
+    }
+  }
+
+  /**
+   * Save main titles Map to disk
+   * Converts Map to sorted array and writes to main.json
+   * @private
+   * @param {Map<string, MainTitle>} titlesMap - Map of title_key to MainTitle
+   * @returns {Promise<void>}
+   */
+  async _saveTitlesData(titlesMap) {
+    try {
+      // Convert Map to array
+      const titlesArray = Array.from(titlesMap.values());
+      
+      // Sort by title (alphabetically ascending) for consistency
+      titlesArray.sort((a, b) => {
+        const titleA = (a.title || '').toLowerCase();
+        const titleB = (b.title || '').toLowerCase();
+        if (titleA < titleB) return -1;
+        if (titleA > titleB) return 1;
+        return 0;
+      });
+
+      // Get file path for titles collection
+      const filePath = this._database._fileStorage.getCollectionPath(this._titlesCollection);
+      
+      // Write to disk (cache invalidation handled automatically by writeJsonFile)
+      await this._database._fileStorage.writeJsonFile(filePath, titlesArray);
+      
+      logger.info(`Saved ${titlesArray.length} titles to disk`);
+    } catch (error) {
+      logger.error('Error saving titles to disk:', error);
+      throw error;
+    }
   }
 }
 

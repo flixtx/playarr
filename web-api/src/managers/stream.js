@@ -19,9 +19,11 @@ const STREAM_HEADERS = {
 class StreamManager {
   /**
    * @param {import('./titles.js').TitlesManager} titlesManager - Titles manager instance
+   * @param {import('../services/cache.js').CacheService} cacheService - Cache service instance for API titles
    */
-  constructor(titlesManager) {
+  constructor(titlesManager, cacheService) {
     this._titlesManager = titlesManager;
+    this._cacheService = cacheService;
     this._timeout = 3000; // 3 seconds timeout for URL checks
   }
 
@@ -48,6 +50,15 @@ class StreamManager {
   _getNumber(num, prefix) {
     const number = String(num).padStart(2, '0');
     return `${prefix}${number}`;
+  }
+
+  /**
+   * Get API titles from cache (with provider URLs)
+   * @private
+   * @returns {Map<string, MainTitle>|null} API titles Map or null if not cached
+   */
+  _getAPITitlesFromCache() {
+    return this._cacheService.get('titles-api') || null;
   }
 
   /**
@@ -81,9 +92,15 @@ class StreamManager {
    */
   async _getSources(titleId, mediaType, seasonNumber = null, episodeNumber = null) {
     const titleKey = `${mediaType}-${titleId}`;
-    const titlesData = await this._titlesManager.getTitlesData();
-    const titleData = titlesData.get(titleKey);
+    
+    // Get API titles from cache (with provider URLs)
+    const apiTitles = this._getAPITitlesFromCache();
+    if (!apiTitles) {
+      logger.warn('API titles cache not available');
+      return [];
+    }
 
+    const titleData = apiTitles.get(titleKey);
     if (!titleData) {
       logger.warn(`Title data not found for title key: ${titleKey}`);
       return [];
@@ -104,18 +121,9 @@ class StreamManager {
       return [];
     }
 
-    const streamSources = streamData.sources || {};
-    const sources = [];
-
-    // Extract URLs from all providers
-    for (const providerName of Object.keys(streamSources)) {
-      const streamSourceData = streamSources[providerName];
-      const streamUrl = streamSourceData?.url;
-
-      if (streamUrl && !sources.includes(streamUrl)) {
-        sources.push(streamUrl);
-      }
-    }
+    // Extract URLs from sources dictionary (now {providerId: url})
+    const sourcesDict = streamData.sources || {};
+    const sources = Object.values(sourcesDict);
 
     return sources;
   }

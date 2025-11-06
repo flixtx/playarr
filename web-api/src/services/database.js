@@ -22,6 +22,15 @@ class DatabaseService {
   }
 
   /**
+   * Invalidate cache for a collection
+   * @param {string} collectionName - Collection name to invalidate
+   */
+  invalidateCollectionCache(collectionName) {
+    const filePath = this._getCollectionPath(collectionName);
+    this._fileStorage.invalidateFileCache(filePath);
+  }
+
+  /**
    * Get file path for collection
    * @private
    */
