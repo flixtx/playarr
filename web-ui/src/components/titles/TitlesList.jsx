@@ -152,8 +152,12 @@ const TitlesList = ({ title, searchQuery = '', onSearchChange }) => {
             } else {
                 await dispatch(addToWatchlist(titleKey)).unwrap();
             }
+            // The Redux state will be updated by the reducer, which will cause
+            // selectedTitle to update, which will cause the dialog to re-render
         } catch (error) {
             console.error('Failed to update watchlist:', error);
+            // On error, we might want to revert the optimistic update
+            // but since we're using Redux, the state won't have changed
         } finally {
             setLoadingItems(prev => {
                 const newSet = new Set(prev);

@@ -104,7 +104,12 @@ export const addToWatchlist = createAsyncThunk(
     const response = await axiosInstance.put(API_ENDPOINTS.watchlist(titleKey), {
       watchlist: true
     });
-    return response.data;
+    // Return both the response and the titleKey/watchlist status for state update
+    return {
+      ...response.data,
+      titleKey,
+      watchlist: true
+    };
   }
 );
 
@@ -114,7 +119,12 @@ export const removeFromWatchlist = createAsyncThunk(
     const response = await axiosInstance.put(API_ENDPOINTS.watchlist(titleKey), {
       watchlist: false
     });
-    return response.data;
+    // Return both the response and the titleKey/watchlist status for state update
+    return {
+      ...response.data,
+      titleKey,
+      watchlist: false
+    };
   }
 );
 
@@ -122,7 +132,9 @@ export const updateWatchlistBulk = createAsyncThunk(
   'titles/updateWatchlistBulk',
   async (data) => {
     const response = await axiosInstance.put(API_ENDPOINTS.watchlistBulk, data);
-    return response.data;
+    // Return the titles array with titleKey and watchlist status for state update
+    // data.titles should be an array of { key, watchlist }
+    return data.titles || [];
   }
 );
 

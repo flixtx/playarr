@@ -191,8 +191,20 @@ const TitleDetailsDialog = ({ open, onClose, title, onWatchlistToggle, onSimilar
         setSelectedSeason(season);
     };
 
-    const handleWatchlistToggle = () => {
+    const handleWatchlistToggle = async () => {
         if (!title) return;
+        // Optimistically update the UI immediately
+        // Use title.watchlist as source of truth, fallback to fullTitleDetails
+        const currentWatchlistStatus = title.watchlist ?? fullTitleDetails?.watchlist ?? false;
+        const newWatchlistStatus = !currentWatchlistStatus;
+        
+        // Update fullTitleDetails immediately for instant UI feedback
+        setFullTitleDetails(prev => prev ? {
+            ...prev,
+            watchlist: newWatchlistStatus
+        } : null);
+        
+        // Trigger the Redux action which will update the title prop
         onWatchlistToggle();
     };
 
