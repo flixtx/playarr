@@ -22,59 +22,109 @@ class PlaylistManager {
   }
 
   /**
+   * Get relevant titles and their unique streams for user watchlist filtered by media type
+   * @private
+   * @param {string} mediaType - Media type ('movies' or 'tvshows')
+   * @param {Object} user - User object with watchlist
+   * @returns {Promise<Array<{title: Object, streamId: string, seasonNumber?: number, episodeNumber?: number}>>} Array of title-stream combinations
+   */
+  async _getWatchlistStreams(mediaType, user = null) {
+    // Get titles in watchlist from user only (no fallbacks)
+    if (!user || !user.watchlist || !Array.isArray(user.watchlist)) {
+      return [];
+    }
+
+    const watchlistTitleKeys = user.watchlist;
+
+    // Get titles from database
+    const titlesData = await this._database.getDataList('titles');
+    if (!titlesData) {
+      return [];
+    }
+
+    // Retrieve unique streams for watchlist titles
+    const relevantStreams = [];
+
+    for (const titleKey of watchlistTitleKeys) {
+      // Filter by media type from title key prefix
+      if (!titleKey.startsWith(`${mediaType}-`)) {
+        continue;
+      }
+
+      // Get title from titles data
+      const title = titlesData.get(titleKey);
+      if (!title || !title.streams) {
+        continue;
+      }
+
+      // Extract unique stream IDs from title.streams
+      // For movies: "main"
+      // For tvshows: "S01-E01", "S01-E02", etc.
+      for (const [streamId, streamData] of Object.entries(title.streams)) {
+        // Skip if stream has no sources
+        const hasSources = Array.isArray(streamData) 
+          ? streamData.length > 0 
+          : (streamData?.sources && Array.isArray(streamData.sources) && streamData.sources.length > 0);
+        
+        if (!hasSources) {
+          continue;
+        }
+
+        // Parse season/episode from stream ID for TV shows
+        let seasonNumber = null;
+        let episodeNumber = null;
+        
+        if (mediaType === 'tvshows' && streamId !== 'main') {
+          const match = streamId.match(/^S(\d+)-E(\d+)$/i);
+          if (match) {
+            seasonNumber = parseInt(match[1], 10);
+            episodeNumber = parseInt(match[2], 10);
+          }
+        }
+
+        relevantStreams.push({
+          title,
+          streamId,
+          seasonNumber,
+          episodeNumber
+        });
+      }
+    }
+
+    return relevantStreams;
+  }
+
+  /**
    * Get media files mapping for all titles in watchlist
    * Matches Python's PlaylistService.get_media_files_mapping()
    */
   async getMediaFilesMapping(baseUrl, mediaType, user = null) {
     const mediaFiles = {};
+    const relevantStreams = await this._getWatchlistStreams(mediaType, user);
 
-    // Get titles in watchlist
-    let watchlistTitleKeys = [];
-    if (user && user.watchlist) {
-      watchlistTitleKeys = user.watchlist;
-    } else {
-      // If no user, get all titles with watchlist flag set to true
-      // This matches backward compatibility behavior
-      watchlistTitleKeys = await this._getTitlesInWatchlist(mediaType);
-    }
-
-    // Get streams from database
-    const streamsData = await this._database.getDataObject('titles-streams') || {};
-    if (!streamsData || Object.keys(streamsData).length === 0) {
-      return mediaFiles;
-    }
-
-    // Get main titles to match title keys
-    const titlesData = await this._database.getDataList('titles');
-
-    for (const titleKey of watchlistTitleKeys) {
-      const title = titlesData.get(titleKey);
-
-      if (!title) {
-        continue;
+    // Build output format: { proxyPath: streamUrl }
+    for (const { title, streamId, seasonNumber, episodeNumber } of relevantStreams) {
+      // Build proxy path
+      let proxyPath = '';
+      const year = title.release_date ? new Date(title.release_date).getFullYear() : '';
+      
+      if (mediaType === 'movies') {
+        proxyPath = `${mediaType}/${title.title} (${year}) [tmdb=${title.title_id}]/${title.title} (${year}).strm`;
+      } else {
+        // TV show
+        const seasonStr = `Season ${seasonNumber}`;
+        proxyPath = `${mediaType}/${title.title} (${year}) [tmdb=${title.title_id}]/${seasonStr}/${title.title} (${year}) ${streamId}.strm`;
       }
 
-      const currentTitleType = title.type;
-
-      if (currentTitleType !== mediaType) {
-        continue;
+      // Build stream URL
+      let streamUrl = '';
+      if (mediaType === 'movies') {
+        streamUrl = `${baseUrl}/api/stream/movies/${title.title_id}?api_key=${user.api_key}`;
+      } else {
+        streamUrl = `${baseUrl}/api/stream/tvshows/${title.title_id}/${seasonNumber}/${episodeNumber}?api_key=${user.api_key}`;
       }
 
-      // Find all streams for this title
-      // Stream key format: {type}-{tmdbId}-{streamId}-{providerId}
-      const titlePrefix = `${title.type}-${title.title_id}-`;
-
-      for (const [streamKey, streamEntry] of Object.entries(streamsData)) {
-        if (streamKey.startsWith(titlePrefix)) {
-          const proxyPath = streamEntry.proxy_path;
-          const proxyUrl = streamEntry.proxy_url;
-
-          if (proxyPath && proxyUrl) {
-            const streamUrl = `${baseUrl}/api/stream/${proxyUrl}`;
-            mediaFiles[proxyPath] = streamUrl;
-          }
-        }
-      }
+      mediaFiles[proxyPath] = streamUrl;
     }
 
     return mediaFiles;
@@ -86,141 +136,45 @@ class PlaylistManager {
    */
   async getM3u8Streams(baseUrl, mediaType, user = null) {
     const lines = ['#EXTM3U'];
+    const relevantStreams = await this._getWatchlistStreams(mediaType, user);
 
-    // Get titles in watchlist
-    let watchlistTitleKeys = [];
-    if (user && user.watchlist) {
-      watchlistTitleKeys = user.watchlist;
-    } else {
-      // If no user, get all titles with watchlist flag set to true
-      // This matches backward compatibility behavior
-      watchlistTitleKeys = await this._getTitlesInWatchlist(mediaType);
-    }
-
-    // Get streams from database
-    const streamsData = await this._database.getDataObject('titles-streams') || {};
-    if (!streamsData || Object.keys(streamsData).length === 0) {
-      return lines.join('\n');
-    }
-
-    // Get main titles to match title keys
-    const titlesData = await this._database.getDataList('titles');
-
-    for (const titleKey of watchlistTitleKeys) {
-      const title = titlesData.get(titleKey);
-
-      if (!title) {
-        continue;
+    // Build output format: M3U playlist lines
+    for (const { title, streamId, seasonNumber, episodeNumber } of relevantStreams) {
+      // Build stream URL
+      let streamUrl = '';
+      if (mediaType === 'movies') {
+        streamUrl = `${baseUrl}/api/stream/movies/${title.title_id}?api_key=${user.api_key}`;
+      } else {
+        streamUrl = `${baseUrl}/api/stream/tvshows/${title.title_id}/${seasonNumber}/${episodeNumber}?api_key=${user.api_key}`;
       }
 
-      const currentTitleType = title.type;
+      // Build M3U metadata
+      const tvgName = mediaType === 'movies' 
+        ? title.title 
+        : `${title.title} - S${String(seasonNumber).padStart(2, '0')}E${String(episodeNumber).padStart(2, '0')}`;
+      
+      const tvgId = `${mediaType}-${title.title_id}${mediaType === 'tvshows' ? `-${streamId}` : ''}`;
+      const tvgLogo = title.poster_path ? `https://image.tmdb.org/t/p/w300${title.poster_path}` : '';
+      const groupTitle = title.genres && title.genres.length > 0 
+        ? title.genres.map(g => typeof g === 'string' ? g : g.name).join(', ')
+        : '';
 
-      if (currentTitleType !== mediaType) {
-        continue;
-      }
+      const paramsParts = [];
+      if (tvgId) paramsParts.push(`tvg-id="${tvgId}"`);
+      if (tvgName) paramsParts.push(`tvg-name="${tvgName}"`);
+      if (tvgLogo) paramsParts.push(`tvg-logo="${tvgLogo}"`);
+      if (groupTitle) paramsParts.push(`group-title="${groupTitle}"`);
 
-      // Find all streams for this title
-      // Stream key format: {type}-{tmdbId}-{streamId}-{providerId}
-      const titlePrefix = `${title.type}-${title.title_id}-`;
+      const params = paramsParts.join(' ');
+      const metadata = `#EXTINF:-1 ${params},${tvgName}`;
 
-      for (const [streamKey, streamEntry] of Object.entries(streamsData)) {
-        if (streamKey.startsWith(titlePrefix)) {
-          const streamLines = this._getM3u8ItemFromStreamEntry(streamEntry, baseUrl);
-          lines.push(...streamLines);
-        }
-      }
+      lines.push(metadata);
+      lines.push(streamUrl);
     }
 
     return lines.join('\n');
   }
 
-  /**
-   * Get M3U8 item for a specific stream entry from main-titles-streams
-   * @param {Object} streamEntry - Stream entry from main-titles-streams.json
-   * @param {string} baseUrl - Base URL for stream proxy
-   * @returns {Array<string>} Array with [metadata, streamUrl] or empty array
-   */
-  _getM3u8ItemFromStreamEntry(streamEntry, baseUrl) {
-    const proxyUrl = streamEntry.proxy_url;
-    const tvgName = streamEntry['tvg-name'];
-
-    if (!tvgName || !proxyUrl) {
-      return [];
-    }
-
-    const streamUrl = `${baseUrl}/api/stream/${proxyUrl}`;
-
-    // Build parameters from stream entry, only including M3U8 parameters
-    const paramsParts = [];
-    for (const [key, value] of Object.entries(streamEntry)) {
-      if (M3U8_PARAMETERS.includes(key)) {
-        paramsParts.push(`${key}="${value}"`);
-      }
-    }
-
-    const params = paramsParts.join(' ');
-    const metadata = `#EXTINF:-1 ${params},${tvgName}`;
-
-    return [metadata, streamUrl];
-  }
-
-  /**
-   * Get M3U8 item for a specific stream (legacy method, kept for compatibility)
-   * Matches Python's PlaylistService._get_m3u8_item()
-   */
-  _getM3u8Item(streamData, baseUrl) {
-    const streamProxyData = streamData.proxy;
-
-    if (!streamProxyData) {
-      return [];
-    }
-
-    const tvgName = streamProxyData['tvg-name'];
-    const proxyStreamUrl = streamProxyData.url;
-
-    if (!tvgName || !proxyStreamUrl) {
-      return [];
-    }
-
-    const streamUrl = `${baseUrl}/api/stream/${proxyStreamUrl}`;
-
-    // Build parameters from proxy data, only including M3U8 parameters
-    const paramsParts = [];
-    for (const [key, value] of Object.entries(streamProxyData)) {
-      if (M3U8_PARAMETERS.includes(key)) {
-        paramsParts.push(`${key}="${value}"`);
-      }
-    }
-
-    const params = paramsParts.join(' ');
-
-    const metadata = `#EXTINF:-1 ${params},${tvgName}`;
-
-    return [metadata, streamUrl];
-  }
-
-  /**
-   * Get all titles in watchlist (for backward compatibility when no user provided)
-   * Matches Python's TMDBProvider.get_titles_in_watchlist()
-   */
-  async _getTitlesInWatchlist(mediaType) {
-    const titlesData = await this._database.getDataList('titles');
-    const watchlistTitleKeys = [];
-
-    for (const [titleKey, titleData] of titlesData.entries()) {
-      // Filter by media type
-      if (titleData.type !== mediaType) {
-        continue;
-      }
-
-      // Check if title has watchlist flag set to true
-      if (titleData.watchlist === true) {
-        watchlistTitleKeys.push(titleKey);
-      }
-    }
-
-    return watchlistTitleKeys;
-  }
 }
 
 // Export class
