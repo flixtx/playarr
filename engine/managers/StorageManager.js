@@ -160,7 +160,16 @@ export class StorageManager {
       // If wrapData is true, unwrap from {data: ..., metadata: ...} format
       return cacheData.data || cacheData; // Support both formats for backward compatibility
     } catch (error) {
-      this.logger.error(`Error loading cache: ${error.message}`);
+      // If JSON parsing failed, delete the corrupted file so it can be regenerated
+      if (error.message && (error.message.includes('Unexpected end of JSON') || error.message.includes('JSON'))) {
+        try {
+          fs.removeSync(cachePath);
+          this.logger.warn(`Deleted corrupted cache file: ${cachePath}`);
+        } catch (removeError) {
+          this.logger.error(`Error deleting corrupted cache file ${cachePath}: ${removeError.message}`);
+        }
+      }
+      this.logger.error(`Error loading cache: ${cachePath}: ${error.message}`);
       return null;
     }
   }

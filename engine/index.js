@@ -21,6 +21,7 @@ async function main() {
   logger.info('Starting Playarr Engine with Bree.js job scheduler...');
 
   // Track job execution state to prevent concurrent execution
+  const runningJobs = new Set();
   let isProcessProvidersTitlesRunning = false;
 
   // Configure Bree.js jobs with schedules
@@ -70,9 +71,10 @@ async function main() {
     ]
   });
 
-  // Track processProvidersTitles execution state
+  // Track job execution state
   bree.on('worker created', (name) => {
     logger.info(`Worker created: ${name}`);
+    runningJobs.add(name);
     if (name === 'processProvidersTitles') {
       isProcessProvidersTitlesRunning = true;
       logger.info('processProvidersTitles is now running - processMainTitles will be skipped until it completes');
@@ -81,20 +83,39 @@ async function main() {
 
   bree.on('worker deleted', (name) => {
     logger.info(`Worker deleted: ${name}`);
+    runningJobs.delete(name);
     if (name === 'processProvidersTitles') {
       isProcessProvidersTitlesRunning = false;
       logger.info('processProvidersTitles completed - processMainTitles can now run');
     }
   });
 
-  // Override the run method to prevent processMainTitles from running when processProvidersTitles is active
+  // Override the run method to prevent any job from running if it's already running
+  // Also prevent processMainTitles from running when processProvidersTitles is active
   const originalRun = bree.run.bind(bree);
   bree.run = async function(name) {
+    // Prevent any job from running if it's already running
+    if (runningJobs.has(name)) {
+      logger.info(`Skipping ${name} - already running`);
+      return;
+    }
+    
+    // Special case: prevent processMainTitles from running when processProvidersTitles is active
     if (name === 'processMainTitles' && isProcessProvidersTitlesRunning) {
       logger.info('Skipping processMainTitles - processProvidersTitles is currently running');
       return;
     }
-    return originalRun(name);
+    
+    try {
+      return await originalRun(name);
+    } catch (error) {
+      // If Bree throws "already running" error, ignore it (we're already tracking it)
+      if (error.message && error.message.includes('already running')) {
+        logger.info(`Skipping ${name} - Bree detected it is already running`);
+        return;
+      }
+      throw error;
+    }
   };
 
   bree.on('worker message', (name, message) => {
