@@ -18,12 +18,10 @@ const STREAM_HEADERS = {
  */
 class StreamManager {
   /**
-   * @param {import('./titles.js').TitlesManager} titlesManager - Titles manager instance
-   * @param {import('../services/cache.js').CacheService} cacheService - Cache service instance for API titles
+   * @param {import('../services/database.js').DatabaseService} database - Database service instance
    */
-  constructor(titlesManager, cacheService) {
-    this._titlesManager = titlesManager;
-    this._cacheService = cacheService;
+  constructor(database) {
+    this._database = database;
     this._timeout = 3000; // 3 seconds timeout for URL checks
   }
 
@@ -50,15 +48,6 @@ class StreamManager {
   _getNumber(num, prefix) {
     const number = String(num).padStart(2, '0');
     return `${prefix}${number}`;
-  }
-
-  /**
-   * Get API titles from cache (with provider URLs)
-   * @private
-   * @returns {Map<string, MainTitle>|null} API titles Map or null if not cached
-   */
-  _getAPITitlesFromCache() {
-    return this._cacheService.get('titles-api') || null;
   }
 
   /**
@@ -91,39 +80,37 @@ class StreamManager {
    * Matches Python's StreamService._get_sources()
    */
   async _getSources(titleId, mediaType, seasonNumber = null, episodeNumber = null) {
-    const titleKey = `${mediaType}-${titleId}`;
+    // Build stream key prefix: {mediaType}-{titleId}-{streamId}-
+    const titlePrefix = `${mediaType}-${titleId}-`;
     
-    // Get API titles from cache (with provider URLs)
-    const apiTitles = this._getAPITitlesFromCache();
-    if (!apiTitles) {
-      logger.warn('API titles cache not available');
-      return [];
-    }
-
-    const titleData = apiTitles.get(titleKey);
-    if (!titleData) {
-      logger.warn(`Title data not found for title key: ${titleKey}`);
-      return [];
-    }
-
-    const streams = titleData.streams || {};
-    let streamId = 'main';
-
+    // Build stream ID suffix
+    let streamIdSuffix = 'main';
     if (mediaType === 'tvshows') {
       const seasonNum = this._getSeasonNumber(seasonNumber);
       const episodeNum = this._getEpisodeNumber(episodeNumber);
-      streamId = `${seasonNum}-${episodeNum}`;
+      streamIdSuffix = `${seasonNum}-${episodeNum}`;
     }
-
-    const streamData = streams[streamId];
-    if (!streamData) {
-      logger.warn(`Stream data not found for stream ID: ${streamId}`);
+    
+    // Get streams from database
+    const streamsData = await this._database.getDataObject('titles-streams') || {};
+    if (!streamsData || Object.keys(streamsData).length === 0) {
+      logger.warn('Streams data not available');
       return [];
     }
 
-    // Extract URLs from sources dictionary (now {providerId: url})
-    const sourcesDict = streamData.sources || {};
-    const sources = Object.values(sourcesDict);
+    // Find all streams matching this title and stream ID
+    // Stream key format: {type}-{tmdbId}-{streamId}-{providerId}
+    const streamPrefix = `${titlePrefix}${streamIdSuffix}-`;
+    const sources = [];
+    
+    for (const [streamKey, streamEntry] of Object.entries(streamsData)) {
+      if (streamKey.startsWith(streamPrefix)) {
+        const proxyUrl = streamEntry.proxy_url;
+        if (proxyUrl) {
+          sources.push(proxyUrl);
+        }
+      }
+    }
 
     return sources;
   }

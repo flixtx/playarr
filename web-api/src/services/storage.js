@@ -35,6 +35,7 @@ class FileStorageService {
     this._fileMappings = new Map([
       // Map titles collection to use title_key as the key
       ['titles', 'title_key'],
+      // titles-streams is already an object, no mapping needed (keys are stream keys themselves)
     ]);
   }
 
@@ -65,6 +66,7 @@ class FileStorageService {
       'stats': path.join(this.dataDir, 'stats.json'),
       'iptv-providers': path.join(this.dataDir, 'settings', 'iptv-providers.json'),
       'titles': path.join(this.dataDir, 'titles', 'main.json'), // Main titles file
+      'titles-streams': path.join(this.dataDir, 'titles', 'main-titles-streams.json'), // Main titles streams file
     };
 
     // Handle provider-specific collections

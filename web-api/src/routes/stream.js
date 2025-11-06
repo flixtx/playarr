@@ -1,5 +1,5 @@
 import express from 'express';
-import { requireApiKey } from '../middleware/apiKey.js';
+import { createRequireApiKey } from '../middleware/apiKey.js';
 
 /**
  * Stream router for handling stream endpoints
@@ -7,9 +7,12 @@ import { requireApiKey } from '../middleware/apiKey.js';
 class StreamRouter {
   /**
    * @param {StreamManager} streamManager - Stream manager instance
+   * @param {DatabaseService} database - Database service instance
    */
-  constructor(streamManager) {
+  constructor(streamManager, database) {
     this._streamManager = streamManager;
+    this._database = database;
+    this._requireApiKey = createRequireApiKey(database);
     this.router = express.Router();
     this._setupRoutes();
   }
@@ -23,7 +26,7 @@ class StreamRouter {
      * GET /api/stream/movies/:title_id
      * Get movie stream redirect (requires API key)
      */
-    this.router.get('/movies/:title_id', requireApiKey, async (req, res) => {
+    this.router.get('/movies/:title_id', this._requireApiKey, async (req, res) => {
       try {
         const { title_id } = req.params;
         const stream = await this._streamManager.getBestSource(title_id, 'movies');
@@ -43,7 +46,7 @@ class StreamRouter {
      * GET /api/stream/tvshows/:title_id/:season/:episode
      * Get TV show stream redirect (requires API key)
      */
-    this.router.get('/tvshows/:title_id/:season/:episode', requireApiKey, async (req, res) => {
+    this.router.get('/tvshows/:title_id/:season/:episode', this._requireApiKey, async (req, res) => {
       try {
         const { title_id, season, episode } = req.params;
         const stream = await this._streamManager.getBestSource(

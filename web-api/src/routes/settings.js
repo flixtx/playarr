@@ -1,5 +1,5 @@
 import express from 'express';
-import { requireAuth } from '../middleware/auth.js';
+import { createRequireAuth } from '../middleware/auth.js';
 
 // TMDB token key constant matching Python
 const TMDB_TOKEN_KEY = 'tmdb_token';
@@ -10,9 +10,12 @@ const TMDB_TOKEN_KEY = 'tmdb_token';
 class SettingsRouter {
   /**
    * @param {SettingsManager} settingsManager - Settings manager instance
+   * @param {DatabaseService} database - Database service instance
    */
-  constructor(settingsManager) {
+  constructor(settingsManager, database) {
     this._settingsManager = settingsManager;
+    this._database = database;
+    this._requireAuth = createRequireAuth(database);
     this.router = express.Router();
     this._setupRoutes();
   }
@@ -26,7 +29,7 @@ class SettingsRouter {
      * GET /api/settings/tmdb_token
      * Get TMDB token setting
      */
-    this.router.get('/tmdb_token', requireAuth, async (req, res) => {
+    this.router.get('/tmdb_token', this._requireAuth, async (req, res) => {
       try {
         const result = await this._settingsManager.getSetting(TMDB_TOKEN_KEY);
         return res.status(result.statusCode).json(result.response);
@@ -40,7 +43,7 @@ class SettingsRouter {
      * POST /api/settings/tmdb_token
      * Set TMDB token setting
      */
-    this.router.post('/tmdb_token', requireAuth, async (req, res) => {
+    this.router.post('/tmdb_token', this._requireAuth, async (req, res) => {
       try {
         const { value } = req.body;
 
@@ -60,7 +63,7 @@ class SettingsRouter {
      * DELETE /api/settings/tmdb_token
      * Delete TMDB token setting
      */
-    this.router.delete('/tmdb_token', requireAuth, async (req, res) => {
+    this.router.delete('/tmdb_token', this._requireAuth, async (req, res) => {
       try {
         const result = await this._settingsManager.deleteSetting(TMDB_TOKEN_KEY);
         return res.status(result.statusCode).json(result.response);

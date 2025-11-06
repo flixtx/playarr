@@ -5,6 +5,7 @@ import slugify from 'slugify';
  */
 export const DatabaseCollections = {
   TITLES: 'titles',
+  TITLES_STREAMS: 'titles-streams',
   CATEGORIES: 'categories',
   IPTV_PROVIDERS: 'iptv-providers',
   SETTINGS: 'settings',
@@ -29,6 +30,7 @@ export function getCollectionKey(collection) {
   const keys = {
     [DatabaseCollections.CATEGORIES]: 'key',
     [DatabaseCollections.TITLES]: 'key',
+    [DatabaseCollections.TITLES_STREAMS]: 'key',
     [DatabaseCollections.IPTV_PROVIDERS]: 'id',
     [DatabaseCollections.SETTINGS]: 'key',
     [DatabaseCollections.STATS]: 'key',

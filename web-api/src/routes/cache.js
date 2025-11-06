@@ -86,6 +86,11 @@ class CacheRouter {
       const apiTitles = await this._titlesManager.getTitlesForAPI();
       this._cacheService.set('titles-api', apiTitles);
       logger.info(`Refreshed API titles cache: ${apiTitles.size} titles`);
+      
+      // Also load streams cache
+      const streamsData = await this._database.getDataObject('titles-streams') || {};
+      this._cacheService.set('titles-streams-api', streamsData);
+      logger.info(`Refreshed API streams cache: ${Object.keys(streamsData).length} streams`);
     } catch (error) {
       logger.error('Error refreshing API titles cache:', error);
       throw error;

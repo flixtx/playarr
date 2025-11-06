@@ -102,8 +102,8 @@ async function initialize() {
     const statsManager = new StatsManager(database);
     const providersManager = new ProvidersManager(database, webSocketService, titlesManager);
     const categoriesManager = new CategoriesManager(database, providersManager);
-    const streamManager = new StreamManager(titlesManager, cacheService);
-    const playlistManager = new PlaylistManager(titlesManager);
+    const streamManager = new StreamManager(database);
+    const playlistManager = new PlaylistManager(database);
     const tmdbManager = new TMDBManager(settingsManager);
 
     // Initialize user manager (creates default admin user)
@@ -111,18 +111,18 @@ async function initialize() {
     logger.info('User manager initialized');
 
     // Step 3: Initialize routers (with dependencies)
-    const authRouter = new AuthRouter(userManager);
-    const usersRouter = new UsersRouter(userManager);
-    const profileRouter = new ProfileRouter(userManager);
-    const settingsRouter = new SettingsRouter(settingsManager);
-    const statsRouter = new StatsRouter(statsManager);
-    const titlesRouter = new TitlesRouter(titlesManager);
-    const categoriesRouter = new CategoriesRouter(categoriesManager);
-    const providersRouter = new ProvidersRouter(providersManager);
-    const streamRouter = new StreamRouter(streamManager);
-    const playlistRouter = new PlaylistRouter(playlistManager);
+    const authRouter = new AuthRouter(userManager, database);
+    const usersRouter = new UsersRouter(userManager, database);
+    const profileRouter = new ProfileRouter(userManager, database);
+    const settingsRouter = new SettingsRouter(settingsManager, database);
+    const statsRouter = new StatsRouter(statsManager, database);
+    const titlesRouter = new TitlesRouter(titlesManager, database);
+    const categoriesRouter = new CategoriesRouter(categoriesManager, database);
+    const providersRouter = new ProvidersRouter(providersManager, database);
+    const streamRouter = new StreamRouter(streamManager, database);
+    const playlistRouter = new PlaylistRouter(playlistManager, database);
     const cacheRouter = new CacheRouter(cacheService, fileStorage, titlesManager, statsManager, categoriesManager, database);
-    const tmdbRouter = new TMDBRouter(tmdbManager);
+    const tmdbRouter = new TMDBRouter(tmdbManager, database);
     const healthcheckRouter = new HealthcheckRouter(fileStorage, settingsManager);
 
     // Step 4: Register routes

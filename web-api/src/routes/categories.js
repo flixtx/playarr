@@ -1,6 +1,6 @@
 import express from 'express';
-import { requireAuth } from '../middleware/auth.js';
-import { requireAdmin } from '../middleware/admin.js';
+import { createRequireAuth } from '../middleware/auth.js';
+import { createRequireAdmin } from '../middleware/admin.js';
 
 /**
  * Categories router for handling category endpoints
@@ -8,9 +8,13 @@ import { requireAdmin } from '../middleware/admin.js';
 class CategoriesRouter {
   /**
    * @param {CategoriesManager} categoriesManager - Categories manager instance
+   * @param {DatabaseService} database - Database service instance
    */
-  constructor(categoriesManager) {
+  constructor(categoriesManager, database) {
     this._categoriesManager = categoriesManager;
+    this._database = database;
+    this._requireAuth = createRequireAuth(database);
+    this._requireAdmin = createRequireAdmin(this._requireAuth);
     this.router = express.Router();
     this._setupRoutes();
   }
@@ -24,7 +28,7 @@ class CategoriesRouter {
      * GET /api/iptv/providers/:provider_id/categories
      * Get categories for a specific IPTV provider
      */
-    this.router.get('/providers/:provider_id/categories', requireAuth, async (req, res) => {
+    this.router.get('/providers/:provider_id/categories', this._requireAuth, async (req, res) => {
       try {
         const { provider_id } = req.params;
         const result = await this._categoriesManager.getCategories(provider_id);
@@ -39,7 +43,7 @@ class CategoriesRouter {
      * PUT /api/iptv/providers/:provider_id/categories/:category_key
      * Update a specific category for an IPTV provider (admin only)
      */
-    this.router.put('/providers/:provider_id/categories/:category_key', requireAdmin, async (req, res) => {
+    this.router.put('/providers/:provider_id/categories/:category_key', this._requireAdmin, async (req, res) => {
       try {
         const { provider_id, category_key } = req.params;
         const categoryData = req.body;

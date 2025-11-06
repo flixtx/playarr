@@ -1,6 +1,6 @@
 import express from 'express';
 import { getTokenExpireDays } from '../utils/jwt.js';
-import { requireAuth } from '../middleware/auth.js';
+import { createRequireAuth } from '../middleware/auth.js';
 
 /**
  * Auth router for handling authentication endpoints
@@ -8,9 +8,12 @@ import { requireAuth } from '../middleware/auth.js';
 class AuthRouter {
   /**
    * @param {UserManager} userManager - User manager instance
+   * @param {DatabaseService} database - Database service instance
    */
-  constructor(userManager) {
+  constructor(userManager, database) {
     this._userManager = userManager;
+    this._database = database;
+    this._requireAuth = createRequireAuth(database);
     this.router = express.Router();
     this._setupRoutes();
   }
@@ -58,7 +61,7 @@ class AuthRouter {
      * POST /api/auth/logout
      * Logout user (clear cookie)
      */
-    this.router.post('/logout', requireAuth, async (req, res) => {
+    this.router.post('/logout', this._requireAuth, async (req, res) => {
       try {
         const result = await this._userManager.logout();
 
@@ -81,7 +84,7 @@ class AuthRouter {
      * GET /api/auth/verify
      * Verify authentication status
      */
-    this.router.get('/verify', requireAuth, async (req, res) => {
+    this.router.get('/verify', this._requireAuth, async (req, res) => {
       try {
         // User is attached to request by requireAuth middleware
         const username = req.user.username;

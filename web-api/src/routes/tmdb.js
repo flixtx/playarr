@@ -1,6 +1,6 @@
 import express from 'express';
-import { requireAuth } from '../middleware/auth.js';
-import { requireAdmin } from '../middleware/admin.js';
+import { createRequireAuth } from '../middleware/auth.js';
+import { createRequireAdmin } from '../middleware/admin.js';
 
 /**
  * TMDB router for handling TMDB API endpoints
@@ -8,9 +8,13 @@ import { requireAdmin } from '../middleware/admin.js';
 class TMDBRouter {
   /**
    * @param {TMDBManager} tmdbManager - TMDB manager instance
+   * @param {DatabaseService} database - Database service instance
    */
-  constructor(tmdbManager) {
+  constructor(tmdbManager, database) {
     this._tmdbManager = tmdbManager;
+    this._database = database;
+    this._requireAuth = createRequireAuth(database);
+    this._requireAdmin = createRequireAdmin(this._requireAuth);
     this.router = express.Router();
     this._setupRoutes();
   }
@@ -24,7 +28,7 @@ class TMDBRouter {
      * GET /api/tmdb/api-key
      * Get the TMDB API key
      */
-    this.router.get('/api-key', requireAuth, async (req, res) => {
+    this.router.get('/api-key', this._requireAuth, async (req, res) => {
       try {
         const result = await this._tmdbManager.getApiKey();
         return res.status(result.statusCode).json(result.response);
@@ -38,7 +42,7 @@ class TMDBRouter {
      * PUT /api/tmdb/api-key
      * Set the TMDB API key (admin only)
      */
-    this.router.put('/api-key', requireAdmin, async (req, res) => {
+    this.router.put('/api-key', this._requireAdmin, async (req, res) => {
       try {
         const { api_key } = req.body;
 
@@ -58,7 +62,7 @@ class TMDBRouter {
      * DELETE /api/tmdb/api-key
      * Delete the TMDB API key (admin only)
      */
-    this.router.delete('/api-key', requireAdmin, async (req, res) => {
+    this.router.delete('/api-key', this._requireAdmin, async (req, res) => {
       try {
         const result = await this._tmdbManager.deleteApiKey();
         
@@ -78,7 +82,7 @@ class TMDBRouter {
      * POST /api/tmdb/verify
      * Verify a TMDB API key
      */
-    this.router.post('/verify', requireAuth, async (req, res) => {
+    this.router.post('/verify', this._requireAuth, async (req, res) => {
       try {
         const { api_key } = req.body;
 
@@ -104,7 +108,7 @@ class TMDBRouter {
      * POST /api/tmdb/lists
      * Get TMDB lists for the authenticated user
      */
-    this.router.post('/lists', requireAuth, async (req, res) => {
+    this.router.post('/lists', this._requireAuth, async (req, res) => {
       try {
         const { api_key } = req.body;
 
@@ -124,7 +128,7 @@ class TMDBRouter {
      * POST /api/tmdb/lists/:list_id/items
      * Get items from a TMDB list
      */
-    this.router.post('/lists/:list_id/items', requireAuth, async (req, res) => {
+    this.router.post('/lists/:list_id/items', this._requireAuth, async (req, res) => {
       try {
         const { list_id } = req.params;
         const { api_key } = req.body;
@@ -145,7 +149,7 @@ class TMDBRouter {
      * GET /api/tmdb/stream/movies/:tmdb_id
      * Get TMDB movie stream
      */
-    this.router.get('/stream/movies/:tmdb_id', requireAuth, async (req, res) => {
+    this.router.get('/stream/movies/:tmdb_id', this._requireAuth, async (req, res) => {
       try {
         const { tmdb_id } = req.params;
         const result = await this._tmdbManager.getMovieStream(tmdb_id);

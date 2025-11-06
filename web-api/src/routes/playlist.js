@@ -1,5 +1,5 @@
 import express from 'express';
-import { requireApiKey } from '../middleware/apiKey.js';
+import { createRequireApiKey } from '../middleware/apiKey.js';
 
 /**
  * Get the base URL from the request, respecting X-Forwarded-* headers
@@ -43,9 +43,12 @@ function getBaseUrl(req) {
 class PlaylistRouter {
   /**
    * @param {PlaylistManager} playlistManager - Playlist manager instance
+   * @param {DatabaseService} database - Database service instance
    */
-  constructor(playlistManager) {
+  constructor(playlistManager, database) {
     this._playlistManager = playlistManager;
+    this._database = database;
+    this._requireApiKey = createRequireApiKey(database);
     this.router = express.Router();
     this._setupRoutes();
   }
@@ -59,7 +62,7 @@ class PlaylistRouter {
      * GET /api/playlist/:title_type
      * Get M3U8 playlist for movies or tvshows (requires API key)
      */
-    this.router.get('/:title_type', requireApiKey, async (req, res) => {
+    this.router.get('/:title_type', this._requireApiKey, async (req, res) => {
       try {
         const { title_type } = req.params;
 
@@ -84,7 +87,7 @@ class PlaylistRouter {
      * GET /api/playlist/:title_type/data
      * Get media files mapping for movies or tvshows (requires API key)
      */
-    this.router.get('/:title_type/data', requireApiKey, async (req, res) => {
+    this.router.get('/:title_type/data', this._requireApiKey, async (req, res) => {
       try {
         const { title_type } = req.params;
 

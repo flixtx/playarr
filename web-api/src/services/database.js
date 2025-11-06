@@ -166,6 +166,58 @@ class DatabaseService {
   }
 
   /**
+   * Get object collection data (for collections stored as objects, not arrays)
+   * Similar to getDataList but for object-based collections
+   * @param {string} collectionName - Collection name
+   * @param {string} [key] - Optional key to get specific item from object
+   * @returns {Promise<Object|*>} Object data, or specific value if key provided, or null on error
+   */
+  async getDataObject(collectionName, key = null) {
+    try {
+      if (this._isStopping) {
+        return null;
+      }
+
+      const filePath = this._getCollectionPath(collectionName);
+      const data = await this._fileStorage.readJsonObject(filePath);
+
+      // If key is provided, return specific value
+      if (key !== null) {
+        return data[key] || null;
+      }
+
+      // Return entire object
+      return data || {};
+    } catch (error) {
+      logger.error(`Error getting data object from collection ${collectionName}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Update object collection data (for collections stored as objects, not arrays)
+   * @param {string} collectionName - Collection name
+   * @param {Object} data - Object data to write
+   * @returns {Promise<void>}
+   */
+  async updateDataObject(collectionName, data) {
+    try {
+      if (this._isStopping) {
+        return;
+      }
+
+      const filePath = this._getCollectionPath(collectionName);
+      await this._fileStorage.writeJsonObject(filePath, data);
+      
+      // Invalidate collection cache
+      this.invalidateCollectionCache(collectionName);
+    } catch (error) {
+      logger.error(`Error updating data object in collection ${collectionName}:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * Get item by ID using collection key
    */
   async getItemById(collectionName, itemId) {

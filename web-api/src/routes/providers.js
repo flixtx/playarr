@@ -1,6 +1,6 @@
 import express from 'express';
-import { requireAuth } from '../middleware/auth.js';
-import { requireAdmin } from '../middleware/admin.js';
+import { createRequireAuth } from '../middleware/auth.js';
+import { createRequireAdmin } from '../middleware/admin.js';
 
 /**
  * Providers router for handling IPTV provider endpoints
@@ -8,9 +8,13 @@ import { requireAdmin } from '../middleware/admin.js';
 class ProvidersRouter {
   /**
    * @param {ProvidersManager} providersManager - Providers manager instance
+   * @param {DatabaseService} database - Database service instance
    */
-  constructor(providersManager) {
+  constructor(providersManager, database) {
     this._providersManager = providersManager;
+    this._database = database;
+    this._requireAuth = createRequireAuth(database);
+    this._requireAdmin = createRequireAdmin(this._requireAuth);
     this.router = express.Router();
     this._setupRoutes();
   }
@@ -24,7 +28,7 @@ class ProvidersRouter {
      * GET /api/iptv/providers
      * Get all IPTV providers
      */
-    this.router.get('/', requireAuth, async (req, res) => {
+    this.router.get('/', this._requireAuth, async (req, res) => {
       try {
         const result = await this._providersManager.getProviders();
         return res.status(result.statusCode).json(result.response);
@@ -38,7 +42,7 @@ class ProvidersRouter {
      * POST /api/iptv/providers
      * Create a new IPTV provider (admin only)
      */
-    this.router.post('/', requireAdmin, async (req, res) => {
+    this.router.post('/', this._requireAdmin, async (req, res) => {
       try {
         const providerData = req.body;
 
@@ -58,7 +62,7 @@ class ProvidersRouter {
      * GET /api/iptv/providers/priorities
      * Get all provider priorities
      */
-    this.router.get('/priorities', requireAuth, async (req, res) => {
+    this.router.get('/priorities', this._requireAuth, async (req, res) => {
       try {
         const result = await this._providersManager.getProviderPriorities();
         return res.status(result.statusCode).json(result.response);
@@ -72,7 +76,7 @@ class ProvidersRouter {
      * PUT /api/iptv/providers/priorities
      * Update provider priorities (admin only)
      */
-    this.router.put('/priorities', requireAdmin, async (req, res) => {
+    this.router.put('/priorities', this._requireAdmin, async (req, res) => {
       try {
         const prioritiesData = req.body;
 
@@ -92,7 +96,7 @@ class ProvidersRouter {
      * GET /api/iptv/providers/:provider_id
      * Get a specific IPTV provider
      */
-    this.router.get('/:provider_id', requireAuth, async (req, res) => {
+    this.router.get('/:provider_id', this._requireAuth, async (req, res) => {
       try {
         const { provider_id } = req.params;
         const result = await this._providersManager.getProvider(provider_id);
@@ -107,7 +111,7 @@ class ProvidersRouter {
      * PUT /api/iptv/providers/:provider_id
      * Update an existing IPTV provider (admin only)
      */
-    this.router.put('/:provider_id', requireAdmin, async (req, res) => {
+    this.router.put('/:provider_id', this._requireAdmin, async (req, res) => {
       try {
         const { provider_id } = req.params;
         const providerData = req.body;
@@ -128,7 +132,7 @@ class ProvidersRouter {
      * DELETE /api/iptv/providers/:provider_id
      * Delete an IPTV provider (admin only)
      */
-    this.router.delete('/:provider_id', requireAdmin, async (req, res) => {
+    this.router.delete('/:provider_id', this._requireAdmin, async (req, res) => {
       try {
         const { provider_id } = req.params;
         const result = await this._providersManager.deleteProvider(provider_id);

@@ -1,3 +1,4 @@
+import path from 'path';
 import { DatabaseCollections, toCollectionName } from '../config/collections.js';
 import { createLogger } from '../utils/logger.js';
 
@@ -46,6 +47,7 @@ class TitlesManager {
     this._database = database;
     this._userManager = userManager;
     this._titlesCollection = toCollectionName(DatabaseCollections.TITLES);
+    this._titlesStreamsCollection = toCollectionName(DatabaseCollections.TITLES_STREAMS);
     this._settingsCollection = toCollectionName(DatabaseCollections.SETTINGS);
     this._providersCollection = toCollectionName(DatabaseCollections.IPTV_PROVIDERS);
     this._tmdbPosterPath = 'https://image.tmdb.org/t/p/w300';
@@ -84,6 +86,7 @@ class TitlesManager {
       return new Map();
     }
   }
+
 
   /**
    * Get titles with stream sources transformed to provider URLs
@@ -852,10 +855,32 @@ class TitlesManager {
         logger.info(`Removed provider ${providerId} from ${streamsRemoved} streams across ${titlesUpdated} titles`);
       }
 
+      // Also clean main-titles-streams
+      const streamsData = await this._database.getDataObject(this._titlesStreamsCollection) || {};
+      let streamsEntriesRemoved = 0;
+      
+      if (streamsData && Object.keys(streamsData).length > 0) {
+        const providerSuffix = `-${providerId}`;
+        const streamKeys = Object.keys(streamsData);
+        
+        for (const streamKey of streamKeys) {
+          if (streamKey.endsWith(providerSuffix)) {
+            delete streamsData[streamKey];
+            streamsEntriesRemoved++;
+          }
+        }
+        
+        // Save updated streams if any were removed
+        if (streamsEntriesRemoved > 0) {
+          await this._database.updateDataObject(this._titlesStreamsCollection, streamsData);
+          logger.info(`Removed ${streamsEntriesRemoved} stream entries from main-titles-streams for provider ${providerId}`);
+        }
+      }
+
       // Invalidate provider titles cache after we're done with it
       this._database.invalidateCollectionCache(providerTitlesCollection);
 
-      return { removed: streamsRemoved, titlesUpdated };
+      return { removed: streamsRemoved + streamsEntriesRemoved, titlesUpdated };
     } catch (error) {
       logger.error(`Error removing provider ${providerId} from streams:`, error);
       // Don't throw - allow provider update to complete

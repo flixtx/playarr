@@ -15,10 +15,10 @@ const M3U8_PARAMETERS = [
  */
 class PlaylistManager {
   /**
-   * @param {import('./titles.js').TitlesManager} titlesManager - Titles manager instance
+   * @param {import('../services/database.js').DatabaseService} database - Database service instance
    */
-  constructor(titlesManager) {
-    this._titlesManager = titlesManager;
+  constructor(database) {
+    this._database = database;
   }
 
   /**
@@ -38,7 +38,14 @@ class PlaylistManager {
       watchlistTitleKeys = await this._getTitlesInWatchlist(mediaType);
     }
 
-    const titlesData = await this._titlesManager.getTitlesData();
+    // Get streams from database
+    const streamsData = await this._database.getDataObject('titles-streams') || {};
+    if (!streamsData || Object.keys(streamsData).length === 0) {
+      return mediaFiles;
+    }
+
+    // Get main titles to match title keys
+    const titlesData = await this._database.getDataList('titles');
 
     for (const titleKey of watchlistTitleKeys) {
       const title = titlesData.get(titleKey);
@@ -53,25 +60,20 @@ class PlaylistManager {
         continue;
       }
 
-      const streams = title.streams || {};
+      // Find all streams for this title
+      // Stream key format: {type}-{tmdbId}-{streamId}-{providerId}
+      const titlePrefix = `${title.type}-${title.title_id}-`;
 
-      for (const [streamKey, streamData] of Object.entries(streams)) {
-        const streamProxyData = streamData.proxy;
+      for (const [streamKey, streamEntry] of Object.entries(streamsData)) {
+        if (streamKey.startsWith(titlePrefix)) {
+          const proxyPath = streamEntry.proxy_path;
+          const proxyUrl = streamEntry.proxy_url;
 
-        if (!streamProxyData) {
-          continue;
+          if (proxyPath && proxyUrl) {
+            const streamUrl = `${baseUrl}/api/stream/${proxyUrl}`;
+            mediaFiles[proxyPath] = streamUrl;
+          }
         }
-
-        const streamProxyPath = streamProxyData.path;
-        const streamProxyUrl = streamProxyData.url;
-
-        if (!streamProxyPath || !streamProxyUrl) {
-          continue;
-        }
-
-        const streamUrl = `${baseUrl}/api/stream/${streamProxyUrl}`;
-
-        mediaFiles[streamProxyPath] = streamUrl;
       }
     }
 
@@ -95,7 +97,14 @@ class PlaylistManager {
       watchlistTitleKeys = await this._getTitlesInWatchlist(mediaType);
     }
 
-    const titlesData = await this._titlesManager.getTitlesData();
+    // Get streams from database
+    const streamsData = await this._database.getDataObject('titles-streams') || {};
+    if (!streamsData || Object.keys(streamsData).length === 0) {
+      return lines.join('\n');
+    }
+
+    // Get main titles to match title keys
+    const titlesData = await this._database.getDataList('titles');
 
     for (const titleKey of watchlistTitleKeys) {
       const title = titlesData.get(titleKey);
@@ -110,11 +119,15 @@ class PlaylistManager {
         continue;
       }
 
-      const streams = title.streams || {};
+      // Find all streams for this title
+      // Stream key format: {type}-{tmdbId}-{streamId}-{providerId}
+      const titlePrefix = `${title.type}-${title.title_id}-`;
 
-      for (const [streamKey, streamData] of Object.entries(streams)) {
-        const streamLines = this._getM3u8Item(streamData, baseUrl);
-        lines.push(...streamLines);
+      for (const [streamKey, streamEntry] of Object.entries(streamsData)) {
+        if (streamKey.startsWith(titlePrefix)) {
+          const streamLines = this._getM3u8ItemFromStreamEntry(streamEntry, baseUrl);
+          lines.push(...streamLines);
+        }
       }
     }
 
@@ -122,7 +135,37 @@ class PlaylistManager {
   }
 
   /**
-   * Get M3U8 item for a specific stream
+   * Get M3U8 item for a specific stream entry from main-titles-streams
+   * @param {Object} streamEntry - Stream entry from main-titles-streams.json
+   * @param {string} baseUrl - Base URL for stream proxy
+   * @returns {Array<string>} Array with [metadata, streamUrl] or empty array
+   */
+  _getM3u8ItemFromStreamEntry(streamEntry, baseUrl) {
+    const proxyUrl = streamEntry.proxy_url;
+    const tvgName = streamEntry['tvg-name'];
+
+    if (!tvgName || !proxyUrl) {
+      return [];
+    }
+
+    const streamUrl = `${baseUrl}/api/stream/${proxyUrl}`;
+
+    // Build parameters from stream entry, only including M3U8 parameters
+    const paramsParts = [];
+    for (const [key, value] of Object.entries(streamEntry)) {
+      if (M3U8_PARAMETERS.includes(key)) {
+        paramsParts.push(`${key}="${value}"`);
+      }
+    }
+
+    const params = paramsParts.join(' ');
+    const metadata = `#EXTINF:-1 ${params},${tvgName}`;
+
+    return [metadata, streamUrl];
+  }
+
+  /**
+   * Get M3U8 item for a specific stream (legacy method, kept for compatibility)
    * Matches Python's PlaylistService._get_m3u8_item()
    */
   _getM3u8Item(streamData, baseUrl) {
@@ -161,7 +204,7 @@ class PlaylistManager {
    * Matches Python's TMDBProvider.get_titles_in_watchlist()
    */
   async _getTitlesInWatchlist(mediaType) {
-    const titlesData = await this._titlesManager.getTitlesData();
+    const titlesData = await this._database.getDataList('titles');
     const watchlistTitleKeys = [];
 
     for (const [titleKey, titleData] of titlesData.entries()) {
