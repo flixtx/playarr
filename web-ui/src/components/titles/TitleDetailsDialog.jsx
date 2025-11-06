@@ -10,7 +10,9 @@ import {
     Grid,
     CircularProgress,
     Card,
-    CardContent
+    CardContent,
+    CardMedia,
+    Tooltip
 } from '@mui/material';
 import {
     Close as CloseIcon,
@@ -469,18 +471,62 @@ const TitleDetailsDialog = ({ open, onClose, title, onWatchlistToggle, onSimilar
                                                                         const episodeInfo = extractSeasonEpisode(firstEpisode);
                                                                         if (!episodeInfo) return null;
 
+                                                                        // Extract episode details from firstEpisode
+                                                                        const episodeName = firstEpisode.name || `Episode ${parseInt(episodeNum, 10)}`;
+                                                                        const episodeAirDate = firstEpisode.air_date;
+                                                                        const episodeOverview = firstEpisode.overview;
+                                                                        const episodeStillPath = firstEpisode.still_path;
+
                                                                         return (
                                                                             <Grid item xs={6} sm={4} md={3} lg={2} key={`${selected}-${episodeNum}`}>
                                                                                 <Card sx={{
                                                                                     bgcolor: 'rgba(255, 255, 255, 0.03)',
                                                                                     border: '1px solid rgba(255, 255, 255, 0.1)',
-                                                                                    '&:hover': { bgcolor: 'rgba(255, 255, 255, 0.05)' }
+                                                                                    '&:hover': { bgcolor: 'rgba(255, 255, 255, 0.05)' },
+                                                                                    height: '100%',
+                                                                                    display: 'flex',
+                                                                                    flexDirection: 'column'
                                                                                 }}>
-                                                                                    <CardContent sx={{ p: 1.5, pb: 1.5, position: 'relative' }}>
-                                                                                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                                                                            <Typography variant="body2" sx={{ color: 'white', fontWeight: 500 }}>
-                                                                                                Episode {parseInt(episodeNum, 10)}
-                                                                                            </Typography>
+                                                                                    {episodeStillPath && (
+                                                                                        <CardMedia
+                                                                                            component="img"
+                                                                                            height="140"
+                                                                                            image={sanitizeImageUrl(episodeStillPath)}
+                                                                                            alt={episodeName}
+                                                                                            sx={{
+                                                                                                objectFit: 'cover',
+                                                                                                bgcolor: 'rgba(255, 255, 255, 0.05)'
+                                                                                            }}
+                                                                                            onError={(e) => {
+                                                                                                e.target.src = PLACEHOLDER_IMAGE;
+                                                                                            }}
+                                                                                        />
+                                                                                    )}
+                                                                                    <CardContent sx={{ p: 1.5, pb: 1.5, position: 'relative', flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
+                                                                                        <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: 1 }}>
+                                                                                            <Box sx={{ flex: 1, minWidth: 0 }}>
+                                                                                                <Tooltip title={episodeOverview || episodeName} arrow>
+                                                                                                    <Typography 
+                                                                                                        variant="body2" 
+                                                                                                        sx={{ 
+                                                                                                            color: 'white', 
+                                                                                                            fontWeight: 500,
+                                                                                                            overflow: 'hidden',
+                                                                                                            textOverflow: 'ellipsis',
+                                                                                                            display: '-webkit-box',
+                                                                                                            WebkitLineClamp: 2,
+                                                                                                            WebkitBoxOrient: 'vertical'
+                                                                                                        }}
+                                                                                                    >
+                                                                                                        {episodeName}
+                                                                                                    </Typography>
+                                                                                                </Tooltip>
+                                                                                                {episodeAirDate && (
+                                                                                                    <Typography variant="caption" sx={{ color: 'rgba(255, 255, 255, 0.6)', display: 'block', mt: 0.5 }}>
+                                                                                                        {new Date(episodeAirDate).toLocaleDateString()}
+                                                                                                    </Typography>
+                                                                                                )}
+                                                                                            </Box>
                                                                                             <IconButton
                                                                                                 size="small"
                                                                                                 onClick={() => handleStreamDownload(details.id, episodeInfo.seasonNum, episodeInfo.episodeNum)}
@@ -489,6 +535,8 @@ const TitleDetailsDialog = ({ open, onClose, title, onWatchlistToggle, onSimilar
                                                                                                     bgcolor: 'primary.main',
                                                                                                     width: 32,
                                                                                                     height: 32,
+                                                                                                    ml: 1,
+                                                                                                    flexShrink: 0,
                                                                                                     '&:hover': {
                                                                                                         bgcolor: 'primary.dark'
                                                                                                     }
@@ -497,6 +545,24 @@ const TitleDetailsDialog = ({ open, onClose, title, onWatchlistToggle, onSimilar
                                                                                                 <DownloadIcon fontSize="small" />
                                                                                             </IconButton>
                                                                                         </Box>
+                                                                                        {episodeOverview && (
+                                                                                            <Tooltip title={episodeOverview} arrow>
+                                                                                                <Typography 
+                                                                                                    variant="caption" 
+                                                                                                    sx={{ 
+                                                                                                        color: 'rgba(255, 255, 255, 0.7)', 
+                                                                                                        mt: 1,
+                                                                                                        overflow: 'hidden',
+                                                                                                        textOverflow: 'ellipsis',
+                                                                                                        display: '-webkit-box',
+                                                                                                        WebkitLineClamp: 2,
+                                                                                                        WebkitBoxOrient: 'vertical'
+                                                                                                    }}
+                                                                                                >
+                                                                                                    {episodeOverview}
+                                                                                                </Typography>
+                                                                                            </Tooltip>
+                                                                                        )}
                                                                                     </CardContent>
                                                                                 </Card>
                                                                             </Grid>

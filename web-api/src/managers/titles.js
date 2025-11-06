@@ -622,12 +622,31 @@ class TitlesManager {
         // Check if stream has active sources
         const hasActiveSource = this._hasActiveSource(streamData, enabledProviders);
         
-        flatStreams.push({
+        // Extract episode details if available (for TV shows)
+        const episodeDetails = {
           id: streamId,
           season: season,
           episode: episode,
-          has_active_source: hasActiveSource, // Add flag for download icon
-        });
+          has_active_source: hasActiveSource,
+        };
+
+        // Add episode metadata if available (name, air_date, overview, still_path)
+        if (streamData && typeof streamData === 'object' && !Array.isArray(streamData)) {
+          if (streamData.name) {
+            episodeDetails.name = streamData.name;
+          }
+          if (streamData.air_date) {
+            episodeDetails.air_date = streamData.air_date;
+          }
+          if (streamData.overview) {
+            episodeDetails.overview = streamData.overview;
+          }
+          if (streamData.still_path) {
+            episodeDetails.still_path = this._getPosterPath(streamData.still_path);
+          }
+        }
+        
+        flatStreams.push(episodeDetails);
       }
 
       // Build similar titles
