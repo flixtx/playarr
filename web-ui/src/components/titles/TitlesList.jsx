@@ -1,7 +1,7 @@
 import React, { useEffect, useCallback, useRef, useMemo, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { Box, Typography, Card, CardContent, CardMedia, IconButton, CircularProgress, TextField, InputAdornment, Tooltip, ToggleButtonGroup, ToggleButton, useTheme, useMediaQuery, Button, Chip } from '@mui/material';
-import { PlaylistAdd, PlaylistAddCheck, Search as SearchIcon, FilterList, CalendarMonth, Star as StarIcon, Movie as MovieIcon, LiveTv as LiveTvIcon, ErrorOutline } from '@mui/icons-material';
+import { Box, Typography, Card, CardContent, CardMedia, IconButton, CircularProgress, TextField, InputAdornment, Tooltip, ToggleButtonGroup, ToggleButton, useTheme, useMediaQuery, Button, Chip, Drawer, Divider, Badge } from '@mui/material';
+import { PlaylistAdd, PlaylistAddCheck, Search as SearchIcon, FilterList, CalendarMonth, Star as StarIcon, Movie as MovieIcon, LiveTv as LiveTvIcon, ErrorOutline, ChevronLeft, Close } from '@mui/icons-material';
 import { debounce } from 'lodash';
 import { fetchTitles, updateFilters, setSelectedTitle, addToWatchlist, removeFromWatchlist, incrementPage } from '../../store/slices/titlesSlice';
 import TitleDetailsDialog from './TitleDetailsDialog';
@@ -40,6 +40,17 @@ const TitlesList = ({ title, searchQuery = '', onSearchChange }) => {
     // Define breakpoints for different screen sizes
     const isXSmall = useMediaQuery(theme.breakpoints.down('sm'));
     const isSmall = useMediaQuery(theme.breakpoints.between('sm', 'md'));
+    
+    // Sidebar state with localStorage persistence
+    const [sidebarOpen, setSidebarOpen] = useState(() => {
+        const saved = localStorage.getItem('titlesSidebarOpen');
+        return saved !== null ? JSON.parse(saved) : !isXSmall;
+    });
+
+    // Persist sidebar state to localStorage
+    useEffect(() => {
+        localStorage.setItem('titlesSidebarOpen', JSON.stringify(sidebarOpen));
+    }, [sidebarOpen]);
     const isMedium = useMediaQuery(theme.breakpoints.between('md', 'lg'));
     const isLarge = useMediaQuery(theme.breakpoints.between('lg', 'xl'));
     const isXLarge = useMediaQuery(theme.breakpoints.up('xl'));
@@ -167,15 +178,24 @@ const TitlesList = ({ title, searchQuery = '', onSearchChange }) => {
         }
     }, [dispatch]);
 
+    // Calculate active filter count for badge
+    const getActiveFilterCount = useCallback(() => {
+        let count = 0;
+        if (filters.yearFilter) count++;
+        if (filters.watchlistFilter && filters.watchlistFilter !== 'all') count++;
+        if (filters.mediaType) count++;
+        if (filters.selectedLetter) count++;
+        return count;
+    }, [filters]);
+
+    const activeFilterCount = getActiveFilterCount();
+
     const renderAlphabetFilter = () => (
         <Box sx={{
-            mb: 2,
-            display: {
-                xs: 'none', // Hide on mobile
-                sm: 'flex'  // Show on screens sm and up
-            },
+            display: 'flex',
             flexWrap: 'wrap',
-            gap: 1
+            gap: 1,
+            mb: 2
         }}>
             {ALPHABET_FILTERS.map((letter) => (
                 <Button
@@ -198,111 +218,258 @@ const TitlesList = ({ title, searchQuery = '', onSearchChange }) => {
         </Box>
     );
 
+    const drawerWidth = 320;
+    const isMobile = isXSmall || isSmall;
+
     return (
-        <Box>
-            <Box sx={{ mb: 3 }}>
-
-                {/* Search and Filters */}
-                <Box sx={{ display: 'flex', gap: 2, mb: 2, flexWrap: 'wrap' }}>
-                    <TextField
-                        placeholder="Search titles..."
-                        value={searchQuery}
-                        onChange={handleLocalSearchChange}
-                        InputProps={{
-                            startAdornment: (
-                                <InputAdornment position="start">
-                                    <SearchIcon />
-                                </InputAdornment>
-                            ),
-                        }}
-                        sx={{ flexGrow: 1 }}
-                    />
-
-                    <TextField
-                        placeholder="Year"
-                        value={filters.yearFilter || ''}
-                        onChange={handleYearFilterChange}
-                        InputProps={{
-                            startAdornment: (
-                                <InputAdornment position="start">
-                                    <CalendarMonth />
-                                </InputAdornment>
-                            ),
-                        }}
-                        sx={{ width: 120 }}
-                    />
-
-                    <ToggleButtonGroup
-                        value={filters.watchlistFilter}
-                        exclusive
-                        onChange={handleWatchlistFilterChange}
-                        aria-label="watchlist filter"
-                    >
-                        <ToggleButton value="all" aria-label="all titles">
-                            <Tooltip title="All Titles">
-                                <FilterList />
-                            </Tooltip>
-                        </ToggleButton>
-                        <ToggleButton value="checked" aria-label="in watchlist" sx={{
-                            '&.Mui-selected': {
-                                backgroundColor: 'success.main',
-                                color: 'white',
-                                '&:hover': {
-                                    backgroundColor: 'success.dark',
-                                }
-                            }
-                        }}>
-                            <Tooltip title="In Watchlist">
-                                <PlaylistAddCheck />
-                            </Tooltip>
-                        </ToggleButton>
-                        <ToggleButton value="unchecked" aria-label="not in watchlist">
-                            <Tooltip title="Not in Watchlist">
-                                <PlaylistAdd />
-                            </Tooltip>
-                        </ToggleButton>
-                    </ToggleButtonGroup>
-
-                    <ToggleButtonGroup
-                        value={filters.mediaType}
-                        exclusive
-                        onChange={handleMediaTypeChange}
-                        aria-label="media type"
-                    >
-                        {MEDIA_TYPE_OPTIONS.map(option => (
-                            <ToggleButton key={option.value} value={option.value} aria-label={option.label}>
-                                <Tooltip title={option.label}>
-                                    {option.icon}
-                                </Tooltip>
-                            </ToggleButton>
-                        ))}
-                    </ToggleButtonGroup>
-                </Box>
-
-                {renderAlphabetFilter()}
-
-                {error && renderErrorMessage()}
-
-                {/* Total Count Display */}
-                {!error && pagination.total > 0 && (
-                    <Typography 
-                        variant="body2" 
-                        color="text.secondary" 
-                        sx={{ mt: 1, mb: 2 }}
-                    >
-                        {pagination.total} {pagination.total === 1 ? 'title' : 'titles'} found
-                    </Typography>
-                )}
-            </Box>
-
-            {/* Titles Grid */}
-            <Box
+        <Box sx={{ display: 'flex', position: 'relative' }}>
+            {/* Filter Sidebar Drawer */}
+            <Drawer
+                variant={isMobile ? 'temporary' : 'persistent'}
+                open={sidebarOpen}
+                onClose={() => setSidebarOpen(false)}
+                anchor={isMobile ? 'bottom' : 'left'}
                 sx={{
-                    display: 'grid',
-                    gridTemplateColumns: `repeat(${getGridColumns()}, 1fr)`,
-                    gap: 2
+                    ...(isMobile ? {} : {
+                        width: sidebarOpen ? drawerWidth : 0,
+                        flexShrink: 0,
+                        transition: theme.transitions.create('width', {
+                            easing: theme.transitions.easing.sharp,
+                            duration: theme.transitions.duration.enteringScreen,
+                        }),
+                    }),
+                    '& .MuiDrawer-paper': {
+                        width: isMobile ? '100vw' : drawerWidth,
+                        height: isMobile ? '100vh' : 'auto',
+                        boxSizing: 'border-box',
+                        position: 'relative',
+                        borderRight: isMobile ? 'none' : '1px solid',
+                        borderColor: 'divider',
+                        transition: theme.transitions.create(['width', 'height'], {
+                            easing: theme.transitions.easing.sharp,
+                            duration: theme.transitions.duration.enteringScreen,
+                        }),
+                    },
                 }}
             >
+                <Box sx={{ 
+                    p: 2, 
+                    overflowY: 'auto', 
+                    height: isMobile ? '100%' : 'auto',
+                    maxHeight: isMobile ? '100vh' : 'calc(100vh - 64px)',
+                    backgroundColor: 'background.paper'
+                }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+                        <Typography variant="h6" component="div" sx={{ fontWeight: 600 }}>
+                            Filters
+                        </Typography>
+                        <IconButton
+                            size="small"
+                            onClick={() => setSidebarOpen(false)}
+                            aria-label="close sidebar"
+                            sx={{ 
+                                color: 'text.secondary',
+                                '&:hover': {
+                                    backgroundColor: 'action.hover'
+                                }
+                            }}
+                        >
+                            {isMobile ? <Close /> : <ChevronLeft />}
+                        </IconButton>
+                    </Box>
+
+                    <Divider sx={{ mb: 2 }} />
+
+                    {/* Year Filter */}
+                    <Box sx={{ mb: 3 }}>
+                        <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                            Year
+                        </Typography>
+                        <TextField
+                            fullWidth
+                            placeholder="Year"
+                            value={filters.yearFilter || ''}
+                            onChange={handleYearFilterChange}
+                            InputProps={{
+                                startAdornment: (
+                                    <InputAdornment position="start">
+                                        <CalendarMonth />
+                                    </InputAdornment>
+                                ),
+                            }}
+                            size="small"
+                        />
+                    </Box>
+
+                    <Divider sx={{ mb: 2 }} />
+
+                    {/* Watchlist Filter */}
+                    <Box sx={{ mb: 3 }}>
+                        <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                            Watchlist
+                        </Typography>
+                        <ToggleButtonGroup
+                            value={filters.watchlistFilter}
+                            exclusive
+                            onChange={handleWatchlistFilterChange}
+                            aria-label="watchlist filter"
+                            fullWidth
+                            size="small"
+                        >
+                            <ToggleButton value="all" aria-label="all titles">
+                                <Tooltip title="All Titles">
+                                    <FilterList />
+                                </Tooltip>
+                            </ToggleButton>
+                            <ToggleButton value="checked" aria-label="in watchlist" sx={{
+                                '&.Mui-selected': {
+                                    backgroundColor: 'success.main',
+                                    color: 'white',
+                                    '&:hover': {
+                                        backgroundColor: 'success.dark',
+                                    }
+                                }
+                            }}>
+                                <Tooltip title="In Watchlist">
+                                    <PlaylistAddCheck />
+                                </Tooltip>
+                            </ToggleButton>
+                            <ToggleButton value="unchecked" aria-label="not in watchlist">
+                                <Tooltip title="Not in Watchlist">
+                                    <PlaylistAdd />
+                                </Tooltip>
+                            </ToggleButton>
+                        </ToggleButtonGroup>
+                    </Box>
+
+                    <Divider sx={{ mb: 2 }} />
+
+                    {/* Media Type Filter */}
+                    <Box sx={{ mb: 3 }}>
+                        <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                            Media Type
+                        </Typography>
+                        <ToggleButtonGroup
+                            value={filters.mediaType}
+                            exclusive
+                            onChange={handleMediaTypeChange}
+                            aria-label="media type"
+                            fullWidth
+                            size="small"
+                        >
+                            {MEDIA_TYPE_OPTIONS.map(option => (
+                                <ToggleButton key={option.value} value={option.value} aria-label={option.label}>
+                                    <Tooltip title={option.label}>
+                                        {option.icon}
+                                    </Tooltip>
+                                </ToggleButton>
+                            ))}
+                        </ToggleButtonGroup>
+                    </Box>
+
+                    <Divider sx={{ mb: 2 }} />
+
+                    {/* Alphabet Filter */}
+                    <Box>
+                        <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                            Filter by Letter
+                        </Typography>
+                        {renderAlphabetFilter()}
+                    </Box>
+                </Box>
+            </Drawer>
+
+            {/* Main Content Area */}
+            <Box
+                component="main"
+                sx={{
+                    flexGrow: 1,
+                    ml: sidebarOpen && !isMobile ? 2 : 0,
+                    transition: theme.transitions.create('margin', {
+                        easing: theme.transitions.easing.sharp,
+                        duration: theme.transitions.duration.enteringScreen,
+                    }),
+                }}
+            >
+                <Box sx={{ mb: 3 }}>
+                    {/* Search, Toggle Button, and Title Count */}
+                    <Box sx={{ display: 'flex', gap: 2, mb: 2, flexWrap: 'wrap', alignItems: 'center' }}>
+                        <TextField
+                            placeholder="Search titles..."
+                            value={searchQuery}
+                            onChange={handleLocalSearchChange}
+                            InputProps={{
+                                startAdornment: (
+                                    <InputAdornment position="start">
+                                        <SearchIcon />
+                                    </InputAdornment>
+                                ),
+                            }}
+                            sx={{ flexGrow: 1 }}
+                        />
+
+                        <Badge badgeContent={activeFilterCount} color="primary" invisible={activeFilterCount === 0}>
+                            <Tooltip title={sidebarOpen ? 'Hide filters' : 'Show filters'}>
+                                <IconButton
+                                    onClick={() => setSidebarOpen(!sidebarOpen)}
+                                    aria-label="toggle filters"
+                                    color={sidebarOpen ? 'primary' : 'default'}
+                                    sx={{
+                                        transition: 'all 0.2s ease',
+                                        '&:hover': {
+                                            transform: 'scale(1.1)'
+                                        }
+                                    }}
+                                >
+                                    <FilterList />
+                                </IconButton>
+                            </Tooltip>
+                        </Badge>
+
+                        {/* Total Count Display */}
+                        {!error && pagination?.total !== undefined && (
+                            <Typography 
+                                variant="body2" 
+                                color="text.secondary"
+                                sx={{ 
+                                    whiteSpace: 'nowrap',
+                                    display: { xs: 'none', sm: 'block' } // Hide on mobile to save space
+                                }}
+                            >
+                                {pagination.total === 0 
+                                    ? 'No titles available' 
+                                    : `${pagination.total.toLocaleString()} ${pagination.total === 1 ? 'title' : 'titles'} found`}
+                            </Typography>
+                        )}
+                    </Box>
+
+                    {/* Total Count Display - Mobile */}
+                    {!error && pagination?.total !== undefined && (
+                        <Typography 
+                            variant="body2" 
+                            color="text.secondary" 
+                            sx={{ 
+                                mb: 2,
+                                display: { xs: 'block', sm: 'none' } // Show only on mobile
+                            }}
+                        >
+                            {pagination.total === 0 
+                                ? 'No titles available' 
+                                : `${pagination.total.toLocaleString()} ${pagination.total === 1 ? 'title' : 'titles'} found`}
+                        </Typography>
+                    )}
+
+                    {error && renderErrorMessage()}
+                </Box>
+
+                {/* Titles Grid */}
+                <Box
+                    sx={{
+                        display: 'grid',
+                        gridTemplateColumns: `repeat(${getGridColumns()}, 1fr)`,
+                        gap: 2
+                    }}
+                >
                 {titles.map((item, index) => (
                     <Card
                         key={item.key}
@@ -433,23 +600,24 @@ const TitlesList = ({ title, searchQuery = '', onSearchChange }) => {
                         </CardContent>
                     </Card>
                 ))}
-            </Box>
-
-            {loading && (
-                <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
-                    <CircularProgress />
                 </Box>
-            )}
 
-            {selectedTitle && (
-                <TitleDetailsDialog
-                    open={Boolean(selectedTitle)}
-                    title={selectedTitle}
-                    onClose={handleDialogClose}
-                    onWatchlistToggle={() => toggleWatchlist(selectedTitle.key, selectedTitle.watchlist)}
-                    onSimilarTitleClick={handleSimilarTitleClick}
-                />
-            )}
+                {loading && (
+                    <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
+                        <CircularProgress />
+                    </Box>
+                )}
+
+                {selectedTitle && (
+                    <TitleDetailsDialog
+                        open={Boolean(selectedTitle)}
+                        title={selectedTitle}
+                        onClose={handleDialogClose}
+                        onWatchlistToggle={() => toggleWatchlist(selectedTitle.key, selectedTitle.watchlist)}
+                        onSimilarTitleClick={handleSimilarTitleClick}
+                    />
+                )}
+            </Box>
         </Box>
     );
 };
