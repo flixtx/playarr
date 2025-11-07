@@ -1,5 +1,8 @@
 import { createLogger } from '../utils/logger.js';
 import { DatabaseCollections, toCollectionName } from '../config/collections.js';
+import http from 'http';
+import https from 'https';
+import { URL } from 'url';
 
 const logger = createLogger('StreamManager');
 
@@ -73,12 +76,14 @@ class StreamManager {
       // Check each source and return the first valid one
       for (let i = 0; i < sources.length; i++) {
         const source = sources[i];
-        logger.info(`Checking source ${i + 1}/${sources.length}: ${source}`);
-        if (await this._checkUrl(source)) {
-          logger.info(`Best source for title ${mediaType} ${titleId} is valid: ${source}`);
-          return source;
+        const sourceUrl = typeof source === 'string' ? source : source.url;
+        const providerType = typeof source === 'object' ? source.providerType : null;
+        logger.info(`Checking source ${i + 1}/${sources.length}: ${sourceUrl}`);
+        if (await this._checkUrl(sourceUrl, providerType)) {
+          logger.info(`Best source for title ${mediaType} ${titleId} is valid: ${sourceUrl}`);
+          return sourceUrl;
         } else {
-          logger.warn(`Source ${i + 1}/${sources.length} is invalid for title ${mediaType} ${titleId}: ${source}`);
+          logger.warn(`Source ${i + 1}/${sources.length} is invalid for title ${mediaType} ${titleId}: ${sourceUrl}`);
         }
       }
 
@@ -153,12 +158,15 @@ class StreamManager {
           }
 
           logger.debug(`Processing stream for provider ${providerId}, proxy_url: ${proxyUrl}`);
+          
+          // Get provider type for optimized URL checking
+          const providerType = provider.type || null;
 
           // Check if URL is already absolute (has base URL)
           if (proxyUrl.startsWith('http://') || proxyUrl.startsWith('https://')) {
             // Already absolute, use as-is
             logger.debug(`Using absolute URL: ${proxyUrl}`);
-            sources.push(proxyUrl);
+            sources.push({ url: proxyUrl, providerType });
           } else if (proxyUrl.startsWith('/')) {
             // Relative URL - need to concatenate with base URLs
             if (provider && provider.streams_urls && Array.isArray(provider.streams_urls) && provider.streams_urls.length > 0) {
@@ -170,18 +178,18 @@ class StreamManager {
                   const cleanBaseUrl = baseUrl.replace(/\/$/, '');
                   const fullUrl = `${cleanBaseUrl}${proxyUrl}`;
                   logger.debug(`Constructed full URL: ${fullUrl}`);
-                  sources.push(fullUrl);
+                  sources.push({ url: fullUrl, providerType });
                 }
               }
             } else {
               // No streams_urls configured, log warning but still try the relative URL
               logger.warn(`Provider ${providerId} has relative stream URL but no streams_urls configured. Using relative URL: ${proxyUrl}`);
-              sources.push(proxyUrl);
+              sources.push({ url: proxyUrl, providerType });
             }
           } else {
             // Neither absolute nor relative (unexpected format), use as-is
             logger.warn(`Unexpected stream URL format for ${streamKey}: ${proxyUrl}`);
-            sources.push(proxyUrl);
+            sources.push({ url: proxyUrl, providerType });
           }
         }
       }
@@ -195,52 +203,205 @@ class StreamManager {
   }
 
   /**
-   * Check if a URL is reachable using GET
+   * Check if a URL is reachable
+   * Uses HEAD request for AGTV providers (faster) and GET for others
    * Matches Python's StreamService._check_url()
+   * @param {string} url - URL to check
+   * @param {string|null} providerType - Provider type ('agtv' or 'xtream'), null for unknown
    */
-  async _checkUrl(url) {
+  async _checkUrl(url, providerType = null) {
     try {
-      logger.info(`Checking URL: ${url}`);
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this._timeout);
-
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: STREAM_HEADERS,
-        redirect: 'follow',
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      // Read a small amount to ensure connection works
-      const reader = response.body.getReader();
-      const { done } = await reader.read();
-      reader.releaseLock();
-
-      const isValid = response.ok;
-      if (isValid) {
-        logger.info(`URL check successful: ${url} (status: ${response.status})`);
+      // Use HEAD request for AGTV providers (faster, no body download)
+      // Use native http/https for GET requests (more efficient, reads only 100 bytes)
+      const useHead = providerType === 'agtv';
+      
+      if (useHead) {
+        return await this._checkUrlWithFetch(url, 'HEAD');
       } else {
-        logger.warn(`URL check failed: ${url} (status: ${response.status})`);
+        return await this._checkUrlWithNative(url);
       }
-
-      return isValid;
     } catch (error) {
-      if (error.name === 'AbortError') {
+      if (error.name === 'AbortError' || error.code === 'ETIMEDOUT') {
         logger.warn(`URL check timed out after ${this._timeout}ms: ${url}`);
-      } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
+      } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
         logger.warn(`URL check network error (${error.code}): ${url} - ${error.message}`);
       } else if (error.message) {
-        // Node.js fetch errors might have different structure
-        const errorMsg = error.message || String(error);
-        logger.warn(`URL check failed: ${url} - ${errorMsg}`);
+        logger.warn(`URL check failed: ${url} - ${error.message}`);
       } else {
         logger.error(`Error checking URL: ${url}`, error);
       }
       return false;
     }
+  }
+
+  /**
+   * Check URL using fetch (for HEAD requests)
+   * @private
+   * @param {string} url - URL to check
+   * @param {string} method - HTTP method ('HEAD')
+   * @returns {Promise<boolean>} True if URL is reachable
+   */
+  async _checkUrlWithFetch(url, method) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this._timeout);
+
+    try {
+      logger.info(`Checking URL: ${url} (method: ${method})`);
+
+      const response = await fetch(url, {
+        method: method,
+        headers: STREAM_HEADERS,
+        redirect: 'follow',
+        signal: controller.signal,
+      });
+
+      const isValid = response.ok;
+      if (isValid) {
+        logger.info(`URL check successful: ${url} (status: ${response.status}, method: ${method})`);
+      } else {
+        logger.warn(`URL check failed: ${url} (status: ${response.status}, method: ${method})`);
+      }
+
+      return isValid;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /**
+   * Check URL using native http/https modules (for GET requests)
+   * Reads only first 100 bytes then destroys connection
+   * @private
+   * @param {string} url - URL to check
+   * @param {number} [redirectDepth=0] - Current redirect depth (max 3)
+   * @returns {Promise<boolean>} True if URL is reachable
+   */
+  async _checkUrlWithNative(url, redirectDepth = 0) {
+    const MAX_REDIRECTS = 3;
+    
+    if (redirectDepth > MAX_REDIRECTS) {
+      logger.warn(`URL check exceeded max redirects (${MAX_REDIRECTS}): ${url}`);
+      return false;
+    }
+
+    return new Promise((resolve, reject) => {
+      let resolved = false;
+      
+      try {
+        const urlObj = new URL(url);
+        const isHttps = urlObj.protocol === 'https:';
+        const httpModule = isHttps ? https : http;
+
+        const options = {
+          hostname: urlObj.hostname,
+          port: urlObj.port || (isHttps ? 443 : 80),
+          path: urlObj.pathname + urlObj.search,
+          method: 'GET',
+          headers: STREAM_HEADERS,
+        };
+
+        let bytesRead = 0;
+        const maxBytes = 100; // Only read first 100 bytes
+        const chunks = [];
+
+        logger.info(`Checking URL: ${url} (method: GET, redirect depth: ${redirectDepth})`);
+
+        const req = httpModule.get(options, (res) => {
+          const statusCode = res.statusCode || 0;
+          const isValid = statusCode >= 200 && statusCode < 400;
+
+          // Handle redirects (status 3xx)
+          if (statusCode >= 300 && statusCode < 400 && res.headers.location) {
+            if (!resolved) {
+              resolved = true;
+              req.destroy();
+              
+              // Resolve redirect URL (handle both absolute and relative)
+              let redirectUrl = res.headers.location;
+              if (!redirectUrl.startsWith('http://') && !redirectUrl.startsWith('https://')) {
+                // Relative redirect - construct absolute URL
+                const baseUrl = `${urlObj.protocol}//${urlObj.host}`;
+                redirectUrl = new URL(redirectUrl, baseUrl).href;
+              }
+              
+              logger.debug(`Following redirect to: ${redirectUrl}`);
+              // Recursively follow redirect
+              return this._checkUrlWithNative(redirectUrl, redirectDepth + 1)
+                .then(resolve)
+                .catch(reject);
+            }
+            return;
+          }
+
+          res.on('data', (chunk) => {
+            if (resolved) return;
+
+            chunks.push(chunk);
+            bytesRead += chunk.length;
+
+            // Stop reading after we have enough bytes
+            if (bytesRead >= maxBytes) {
+              resolved = true;
+              req.destroy(); // Stop downloading
+
+              if (isValid) {
+                logger.info(`URL check successful: ${url} (status: ${statusCode}, read ${bytesRead} bytes)`);
+              } else {
+                logger.warn(`URL check failed: ${url} (status: ${statusCode}, read ${bytesRead} bytes)`);
+              }
+
+              resolve(isValid);
+            }
+          });
+
+          res.on('end', () => {
+            if (!resolved) {
+              resolved = true;
+
+              if (isValid) {
+                logger.info(`URL check successful: ${url} (status: ${statusCode}, read ${bytesRead} bytes)`);
+              } else {
+                logger.warn(`URL check failed: ${url} (status: ${statusCode}, read ${bytesRead} bytes)`);
+              }
+
+              resolve(isValid);
+            }
+          });
+
+          res.on('error', (error) => {
+            if (!resolved) {
+              resolved = true;
+              reject(error);
+            }
+          });
+        });
+
+        req.on('error', (error) => {
+          if (!resolved) {
+            resolved = true;
+            reject(error);
+          }
+        });
+
+        req.on('timeout', () => {
+          if (!resolved) {
+            resolved = true;
+            req.destroy();
+            const timeoutError = new Error('Request timeout');
+            timeoutError.code = 'ETIMEDOUT';
+            reject(timeoutError);
+          }
+        });
+
+        // Set timeout
+        req.setTimeout(this._timeout);
+      } catch (error) {
+        if (!resolved) {
+          resolved = true;
+          reject(error);
+        }
+      }
+    });
   }
 }
 
