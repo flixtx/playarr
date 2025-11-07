@@ -13,14 +13,18 @@ import {
   ListItem,
   ListItemText,
   Paper,
+  Tooltip,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
+import StarIcon from '@mui/icons-material/Star';
+import StarBorderIcon from '@mui/icons-material/StarBorder';
 
 function ProviderDetailsForm({ provider, onSave, onCancel }) {
   const [formData, setFormData] = useState({
     id: '',
     urls: [],
+    apiUrlIndex: 0,
     username: '',
     password: '',
     type: 'xtream',
@@ -32,15 +36,21 @@ function ProviderDetailsForm({ provider, onSave, onCancel }) {
   const handleSubmit = useCallback((e) => {
     if (e) e.preventDefault();
 
-    // For Xtream: first URL goes to api_url, all URLs go to streams_urls
+    // For Xtream: selected URL goes to api_url, all URLs go to streams_urls
     // For AGTV: single URL to api_url, streams_urls array limited to 1
     const isXtream = formData.type.toLowerCase() === 'xtream';
     const urls = formData.urls.filter(url => url.trim() !== '');
+    
+    // Ensure apiUrlIndex is valid
+    let apiUrlIndex = 0;
+    if (urls.length > 0) {
+      apiUrlIndex = Math.max(0, Math.min(formData.apiUrlIndex, urls.length - 1));
+    }
 
     const data = {
       id: formData.id,
       streams_urls: isXtream ? urls : (urls.length > 0 ? [urls[0]] : []),
-      api_url: urls.length > 0 ? urls[0] : '',
+      api_url: urls.length > 0 ? urls[apiUrlIndex] : '',
       username: formData.username,
       password: formData.password,
       type: formData.type.toLowerCase(),
@@ -61,12 +71,22 @@ function ProviderDetailsForm({ provider, onSave, onCancel }) {
 
   useEffect(() => {
     if (provider) {
-      // Initialize urls from provider.streams_urls only
+      // Initialize urls from provider.streams_urls
       const urls = provider.streams_urls || [];
+      
+      // Find which URL matches the api_url to set as API URL
+      let apiUrlIndex = 0;
+      if (provider.api_url && urls.length > 0) {
+        const apiUrlIndexFound = urls.findIndex(url => url === provider.api_url);
+        if (apiUrlIndexFound >= 0) {
+          apiUrlIndex = apiUrlIndexFound;
+        }
+      }
 
       setFormData({
         id: provider.id || '',
         urls: urls,
+        apiUrlIndex: apiUrlIndex,
         username: provider.username || '',
         password: provider.password || '',
         type: provider.type || 'xtream',
@@ -78,6 +98,7 @@ function ProviderDetailsForm({ provider, onSave, onCancel }) {
       setFormData({
         id: '',
         urls: [],
+        apiUrlIndex: 0,
         username: '',
         password: '',
         type: 'xtream',
@@ -115,10 +136,37 @@ function ProviderDetailsForm({ provider, onSave, onCancel }) {
 
   const handleRemoveUrl = (index) => {
     const newUrls = formData.urls.filter((_, i) => i !== index);
+    let newApiUrlIndex = formData.apiUrlIndex;
+    
+    // Adjust apiUrlIndex if the removed URL was before it or was the API URL
+    if (index < formData.apiUrlIndex) {
+      newApiUrlIndex = formData.apiUrlIndex - 1;
+    } else if (index === formData.apiUrlIndex) {
+      // If we removed the API URL, set the first URL as API (or 0 if empty)
+      newApiUrlIndex = 0;
+    }
+    
+    // Ensure apiUrlIndex is valid
+    if (newApiUrlIndex >= newUrls.length && newUrls.length > 0) {
+      newApiUrlIndex = newUrls.length - 1;
+    } else if (newUrls.length === 0) {
+      newApiUrlIndex = 0;
+    }
+    
     setFormData({
       ...formData,
-      urls: newUrls
+      urls: newUrls,
+      apiUrlIndex: newApiUrlIndex
     });
+  };
+
+  const handleSetAsApiUrl = (index) => {
+    if (index >= 0 && index < formData.urls.length) {
+      setFormData(prev => ({
+        ...prev,
+        apiUrlIndex: index
+      }));
+    }
   };
 
   const isXtream = formData.type?.toLowerCase() === 'xtream';
@@ -179,37 +227,61 @@ function ProviderDetailsForm({ provider, onSave, onCancel }) {
 
           {formData.urls.length > 0 && (
             <Paper variant="outlined" sx={{ p: 1 }}>
-              <InputLabel sx={{ ml: 1, mb: 1 }}>Server URLs (first is used for API calls)</InputLabel>
+              <InputLabel sx={{ ml: 1, mb: 1 }}>Server URLs</InputLabel>
               <List dense>
-                {formData.urls.map((url, index) => (
-                  <ListItem
-                    key={index}
-                    secondaryAction={
-                      <IconButton
-                        edge="end"
-                        size="small"
-                        onClick={() => handleRemoveUrl(index)}
-                        color="error"
-                        title="Remove"
-                      >
-                        <DeleteIcon />
-                      </IconButton>
-                    }
-                    sx={{
-                      bgcolor: index === 0 ? 'action.selected' : 'transparent',
-                      borderRadius: 1,
-                      mb: 0.5
-                    }}
-                  >
-                    <ListItemText
-                      primary={index === 0 ? `${url} (API)` : url}
-                      primaryTypographyProps={{
-                        variant: 'body2',
-                        fontWeight: index === 0 ? 'bold' : 'normal'
+                {formData.urls.map((url, index) => {
+                  const isApiUrl = index === formData.apiUrlIndex;
+                  return (
+                    <ListItem
+                      key={index}
+                      secondaryAction={
+                        <Box sx={{ display: 'flex', gap: 0.5 }}>
+                          {!isApiUrl && (
+                            <Tooltip title="Set as API Url">
+                              <IconButton
+                                edge="end"
+                                size="small"
+                                onClick={() => handleSetAsApiUrl(index)}
+                                color="primary"
+                              >
+                                <StarBorderIcon />
+                              </IconButton>
+                            </Tooltip>
+                          )}
+                          <IconButton
+                            edge="end"
+                            size="small"
+                            onClick={() => handleRemoveUrl(index)}
+                            color="error"
+                            title="Remove"
+                          >
+                            <DeleteIcon />
+                          </IconButton>
+                        </Box>
+                      }
+                      sx={{
+                        bgcolor: isApiUrl ? 'action.selected' : 'transparent',
+                        borderRadius: 1,
+                        mb: 0.5
                       }}
-                    />
-                  </ListItem>
-                ))}
+                    >
+                      <ListItemText
+                        primary={
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            {isApiUrl && (
+                              <StarIcon sx={{ fontSize: 18, color: 'primary.main' }} />
+                            )}
+                            <span>{isApiUrl ? `${url} (API)` : url}</span>
+                          </Box>
+                        }
+                        primaryTypographyProps={{
+                          variant: 'body2',
+                          fontWeight: isApiUrl ? 'bold' : 'normal'
+                        }}
+                      />
+                    </ListItem>
+                  );
+                })}
               </List>
             </Paper>
           )}

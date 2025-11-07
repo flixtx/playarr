@@ -141,19 +141,11 @@ class ProvidersManager {
    * @private
    */
   async _writeAllProviders(providers) {
-    // Delete all existing providers and insert new ones
-    // This is a simple approach - in production, you might want to update individual items
-    const existingProviders = await this._database.getDataList(this._providersCollection);
-    
-    // Delete all existing
-    for (const provider of existingProviders) {
-      await this._database.deleteData(this._providersCollection, { id: provider.id });
-    }
-    
-    // Insert all new
-    if (providers.length > 0) {
-      await this._database.insertDataList(this._providersCollection, providers);
-    }
+    // Write the entire providers array directly to the file
+    const filePath = this._database._getCollectionPath(this._providersCollection);
+    const fileStorage = this._database._fileStorage;
+    await fileStorage.writeJsonFile(filePath, providers);
+    this._database.invalidateCollectionCache(this._providersCollection);
   }
 
   /**
@@ -285,8 +277,10 @@ class ProvidersManager {
    */
   async updateProvider(providerId, providerData) {
     try {
-      // Load all providers
+      // Get all providers
       const providers = await this._readAllProviders();
+      
+      // Find the provider to update
       const providerIndex = providers.findIndex(p => p.id === providerId);
 
       if (providerIndex === -1) {
@@ -315,7 +309,7 @@ class ProvidersManager {
       // Normalize URLs
       this._normalizeUrls(providerData, existingProvider);
 
-      // Update provider data (preserve id)
+      // Update provider data (preserve id and other fields)
       const updatedProvider = {
         ...existingProvider,
         ...providerData,
