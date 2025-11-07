@@ -651,11 +651,16 @@ export class TMDBProvider extends BaseProvider {
     let processedCount = 0;
     const processedCountByType = { movies: 0, tvShows: 0 };
 
+    // Load existing streams to merge with new ones
+    const existingStreamsPath = ['titles', 'main-titles-streams.json'];
+    const existingStreamsDict = this.data.get(...existingStreamsPath) || {};
+
     // Track remaining titles for progress
     let totalRemaining = titlesToProcess.length;
 
     // Save callback for progress tracking
     const saveCallback = async () => {
+      // Save main titles
       if (mainTitles.length > 0) {
         try {
           await this._saveMainTitles(mainTitles, existingMainTitleMap);
@@ -663,6 +668,20 @@ export class TMDBProvider extends BaseProvider {
           mainTitles.length = 0; // Clear after saving
         } catch (error) {
           this.logger.error(`Error saving accumulated main titles: ${error.message}`);
+        }
+      }
+      
+      // Save streams dictionary (merge with existing)
+      if (Object.keys(allStreamsDict).length > 0) {
+        try {
+          const mergedStreamsDict = { ...existingStreamsDict, ...allStreamsDict };
+          const outputPath = ['titles', 'main-titles-streams.json'];
+          this.data.set(mergedStreamsDict, ...outputPath);
+          this.logger.debug(`Saved ${Object.keys(allStreamsDict).length} accumulated stream entries via progress callback`);
+          // Update existingStreamsDict to include newly saved streams for next merge
+          Object.assign(existingStreamsDict, allStreamsDict);
+        } catch (error) {
+          this.logger.error(`Error saving accumulated streams: ${error.message}`);
         }
       }
     };
@@ -735,10 +754,11 @@ export class TMDBProvider extends BaseProvider {
       await this._saveMainTitles(mainTitles, existingMainTitleMap);
     }
 
-    // Save streams dictionary
+    // Final save of streams dictionary (merge with existing)
     if (Object.keys(allStreamsDict).length > 0) {
+      const mergedStreamsDict = { ...existingStreamsDict, ...allStreamsDict };
       const outputPath = ['titles', 'main-titles-streams.json'];
-      this.data.set(allStreamsDict, ...outputPath);
+      this.data.set(mergedStreamsDict, ...outputPath);
       this.logger.info(`Saved ${Object.keys(allStreamsDict).length} stream entries to main-titles-streams.json`);
     }
 

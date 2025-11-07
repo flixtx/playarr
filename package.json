@@ -7,6 +7,7 @@
     "start": "npm run start:engine & npm run start:api",
     "start:engine": "npm --prefix engine start",
     "start:api": "npm --prefix web-api start",
+    "dev:all": "concurrently \"npm run start:engine\" \"npm run dev:api\" \"npm run dev:ui\"",
     "dev": "npm --prefix engine run dev",
     "dev:ui": "cross-env PORT=3001 npm --prefix web-ui start",
     "dev:api": "npm --prefix web-api run dev",

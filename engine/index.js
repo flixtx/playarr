@@ -34,7 +34,6 @@ async function main() {
         path: path.join(__dirname, 'workers', 'processProvidersTitles.js'),
         interval: '1h', // Every 1 hour
         timeout: 0, // Run immediately on startup
-        closeWorkerAfterMs: 60000, // Close worker 60 seconds after completion
         worker: {
           workerData: {
             cacheDir: CACHE_DIR,
@@ -47,7 +46,6 @@ async function main() {
         path: path.join(__dirname, 'workers', 'processMainTitles.js'),
         interval: '1m', // Every 3 minutes
         timeout: '30s', // First run 5 minutes after startup
-        closeWorkerAfterMs: 60000, // Close worker 60 seconds after completion
         worker: {
           workerData: {
             cacheDir: CACHE_DIR,
@@ -60,7 +58,6 @@ async function main() {
         path: path.join(__dirname, 'workers', 'cachePurge.js'),
         interval: '15m', // Every 15 minutes
         timeout: 0, // Run immediately on startup
-        closeWorkerAfterMs: 60000, // Close worker 60 seconds after completion
         worker: {
           workerData: {
             cacheDir: CACHE_DIR,
@@ -73,20 +70,20 @@ async function main() {
 
   // Track job execution state
   bree.on('worker created', (name) => {
-    logger.info(`Worker created: ${name}`);
+    logger.debug(`Worker created: ${name}`);
     runningJobs.add(name);
     if (name === 'processProvidersTitles') {
       isProcessProvidersTitlesRunning = true;
-      logger.info('processProvidersTitles is now running - processMainTitles will be skipped until it completes');
+      logger.debug('processProvidersTitles is now running - processMainTitles will be skipped until it completes');
     }
   });
 
   bree.on('worker deleted', (name) => {
-    logger.info(`Worker deleted: ${name}`);
+    logger.debug(`Worker deleted: ${name}`);
     runningJobs.delete(name);
     if (name === 'processProvidersTitles') {
       isProcessProvidersTitlesRunning = false;
-      logger.info('processProvidersTitles completed - processMainTitles can now run');
+      logger.debug('processProvidersTitles completed - processMainTitles can now run');
     }
   });
 
@@ -96,13 +93,13 @@ async function main() {
   bree.run = async function(name) {
     // Prevent any job from running if it's already running
     if (runningJobs.has(name)) {
-      logger.info(`Skipping ${name} - already running`);
+      logger.debug(`Skipping ${name} - already running`);
       return;
     }
     
     // Special case: prevent processMainTitles from running when processProvidersTitles is active
     if (name === 'processMainTitles' && isProcessProvidersTitlesRunning) {
-      logger.info('Skipping processMainTitles - processProvidersTitles is currently running');
+      logger.debug('Skipping processMainTitles - processProvidersTitles is currently running');
       return;
     }
     
@@ -111,7 +108,7 @@ async function main() {
     } catch (error) {
       // If Bree throws "already running" error, ignore it (we're already tracking it)
       if (error.message && error.message.includes('already running')) {
-        logger.info(`Skipping ${name} - Bree detected it is already running`);
+        logger.debug(`Skipping ${name} - Bree detected it is already running`);
         return;
       }
       throw error;
@@ -122,7 +119,7 @@ async function main() {
     if (message.success) {
       logger.info(`Job ${name} completed successfully`);
       if (name === 'processProvidersTitles' && Array.isArray(message.result)) {
-        logger.info('=== Fetch Results ===');
+        logger.debug('=== Fetch Results ===');
         message.result.forEach(result => {
           if (result.error) {
             logger.error(`${result.providerName}: ${result.error}`);
@@ -131,7 +128,7 @@ async function main() {
           }
         });
       } else if (name === 'processMainTitles' && message.result) {
-        logger.info('=== Process Results ===');
+        logger.debug('=== Process Results ===');
         logger.info(`Generated: ${message.result.movies} movies, ${message.result.tvShows} TV shows`);
       }
     } else {
