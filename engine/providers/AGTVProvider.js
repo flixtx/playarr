@@ -27,7 +27,8 @@ export class AGTVProvider extends BaseIPTVProvider {
         idField: 'stream_id',
         shouldSkip: this._shouldSkipMovies.bind(this),
         mediaTypeSegment: 'movies',
-        isPaginated: false
+        isPaginated: false,
+        parseFunction: this._parseM3U8Movies.bind(this)
       },
       tvshows: {
         enabled: true,
@@ -35,7 +36,8 @@ export class AGTVProvider extends BaseIPTVProvider {
         shouldSkip: this._shouldSkipTVShows.bind(this),
         mediaTypeSegment: 'tvshows',
         isPaginated: true,
-        pageSizeThreshold: 5000 // Continue pagination if >= this many items
+        pageSizeThreshold: 5000, // Continue pagination if >= this many items
+        parseFunction: this._parseM3U8TVShows.bind(this)
       }
     };
   }
@@ -79,155 +81,150 @@ export class AGTVProvider extends BaseIPTVProvider {
   }
 
   /**
+   * Parse M3U8 content for movies
+   * Each stream is a separate title
+   * @private
+   * @param {Array<Object>} streams - Array of stream objects with metadata and URL
+   * @returns {TitleData[]} Array of parsed title data objects
+   */
+  _parseM3U8Movies(streams) {
+    const titles = [];
+
+    for (const stream of streams) {
+      const streamUrl = stream.url;
+      const tvgId = stream['tvg-id'];
+      const tvgName = stream['tvg-name'];
+      const tvgType = stream['tvg-type'];
+      const groupTitle = stream['group-title'];
+      
+      const title = {
+        stream_id: tvgId, // Use tvg-id as title_id
+        name: tvgName,
+        title: stream.titleName,
+        type: tvgType,
+        streams: {
+          main: streamUrl
+        },
+        category_name: groupTitle
+      };
+
+      titles.push(title);
+    }
+
+    return titles;
+  }
+
+  /**
+   * Parse M3U8 content for TV shows
+   * Groups streams by tvg-id, extracts season/episode from name
+   * @private
+   * @param {Array<Object>} streams - Array of stream objects with metadata and URL
+   * @returns {TitleData[]} Array of parsed title data objects
+   */
+  _parseM3U8TVShows(streams) {
+    const showsMap = new Map();
+
+    for (const stream of streams) {
+      const streamUrl = stream.url;
+      const tvgId = stream['tvg-id'];
+      const tvgName = stream['tvg-name'];
+      const tvgType = stream['tvg-type'];
+      const groupTitle = stream['group-title'];
+
+      // Get or create show object
+      if (!showsMap.has(tvgId)) {
+        showsMap.set(tvgId, {
+          stream_id: tvgId,
+          name: tvgName,
+          title: stream.titleName,
+          type: tvgType,
+          streams: {},
+          category_name: groupTitle
+        });
+      }
+
+      const show = showsMap.get(tvgId);
+      const streamUrlParts = streamUrl.split('/');
+      const seasonNumber = parseInt(streamUrlParts[streamUrlParts.length - 2]);
+      const episodeNumber = parseInt(streamUrlParts[streamUrlParts.length - 1]);
+      
+      // Format key as Sxx-Exx (e.g., S01-E01)
+      const seasonStr = String(seasonNumber).padStart(2, '0');
+      const episodeStr = String(episodeNumber).padStart(2, '0');
+      const key = `S${seasonStr}-E${episodeStr}`;
+
+      show.streams[key] = streamUrl;
+    }
+
+    return Array.from(showsMap.values());
+  }
+
+  /**
    * Parse M3U8 content and extract title information
-   * For TV shows: Groups streams by tvg-id, extracts season/episode from name
-   * For movies: Each stream is a separate title
+   * Iterates through lines, creates stream objects, and routes to type-specific parser
    * @private
    * @param {string} content - M3U8 file content
    * @param {string} type - Content type ('movies' or 'tvshows')
-   * @returns {TitleData[]} Array of parsed title data objects
+   * @returns {{titles: TitleData[], streamCount: number}} Object containing parsed titles and stream count
    */
   _parseM3U8Content(content, type) {
-    const lines = content.split('\n');
-    const isTVShows = type === 'tvshows';
-    
-    if (isTVShows) {
-      // For TV shows: group streams by tvg-id
-      const showsMap = new Map();
-      let currentStream = null;
-
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-
-        if (line.startsWith('#EXTINF:')) {
-          // Parse EXTINF line
-          const extinfMatch = line.match(/#EXTINF:(-?\d+)(?:\s+(.+))?/);
-          if (!extinfMatch) continue;
-
-          const duration = parseInt(extinfMatch[1]) || 0;
-          const attributes = extinfMatch[2] || '';
-          
-          currentStream = {
-            duration,
-            type: 'tvshows',
-          };
-
-          // Parse attributes (e.g., tvg-id, tvg-name, group-title, etc.)
-          const attrPattern = /([\w-]+)="([^"]+)"/g;
-          let attrMatch;
-          while ((attrMatch = attrPattern.exec(attributes)) !== null) {
-            const [, key, value] = attrMatch;
-            currentStream[key] = value;
-          }
-
-          // Extract title name (last part after comma)
-          const titleMatch = attributes.match(/,(.+)$/);
-          if (titleMatch) {
-            currentStream.titleName = titleMatch[1].trim();
-          }
-
-        } else if (line && !line.startsWith('#') && currentStream) {
-          // URL line
-          const streamUrl = line;
-          const tvgId = currentStream['tvg-id'];
-          const groupTitle = currentStream['group-title'];
-          
-          if (!tvgId) {
-            currentStream = null;
-            continue;
-          }
-
-          // Get or create show object
-          if (!showsMap.has(tvgId)) {
-            showsMap.set(tvgId, {
-              stream_id: tvgId, // Use tvg-id as title_id
-              name: groupTitle || tvgId,
-              title: groupTitle || tvgId,
-              type: 'tvshows',
-              streams: {},
-              category_name: groupTitle || null
-            });
-          }
-
-          const show = showsMap.get(tvgId);
-          
-          // Extract season/episode from title name and add stream
-          if (currentStream.titleName) {
-            const streamKey = this._extractSeasonEpisode(currentStream.titleName);
-            if (streamKey) {
-              show.streams[streamKey] = streamUrl;
-            } else {
-              // Fallback: use stream_id from URL if no season/episode found
-              const streamId = streamUrl.substring(streamUrl.lastIndexOf('/') + 1).split('?')[0];
-              show.streams[streamId] = streamUrl;
-            }
-          }
-          
-          currentStream = null;
-        }
-      }
-
-      return Array.from(showsMap.values());
-    } else {
-      // For movies: each stream is a separate title
-      const titles = [];
-      let currentTitle = null;
-
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-
-        if (line.startsWith('#EXTINF:')) {
-          // Parse EXTINF line
-          const extinfMatch = line.match(/#EXTINF:(-?\d+)(?:\s+(.+))?/);
-          if (!extinfMatch) continue;
-
-          const duration = parseInt(extinfMatch[1]) || 0;
-          const attributes = extinfMatch[2] || '';
-          
-          currentTitle = {
-            duration,
-            type: 'movies',
-          };
-
-          // Parse attributes (e.g., tvg-id, tvg-name, group-title, etc.)
-          const attrPattern = /(\w+)="([^"]+)"/g;
-          let attrMatch;
-          while ((attrMatch = attrPattern.exec(attributes)) !== null) {
-            const [, key, value] = attrMatch;
-            currentTitle[key] = value;
-          }
-
-          // Extract title name (last part after comma or last attribute)
-          const titleMatch = attributes.match(/,(.+)$/);
-          if (titleMatch) {
-            currentTitle.title = titleMatch[1].trim();
-            currentTitle.name = currentTitle.title;
-          } else if (currentTitle['tvg-name']) {
-            currentTitle.title = currentTitle['tvg-name'];
-            currentTitle.name = currentTitle.title;
-          }
-
-          // Extract category from group-title
-          if (currentTitle['group-title']) {
-            currentTitle.category_name = currentTitle['group-title'];
-          }
-
-        } else if (line && !line.startsWith('#') && currentTitle) {
-          // URL line
-          const streamUrl = line;
-          const streamId = streamUrl.substring(streamUrl.lastIndexOf('/') + 1).split('?')[0];
-          
-          currentTitle.url = streamUrl;
-          currentTitle.stream_id = streamId;
-          currentTitle.streams = { main: streamUrl };
-          
-          titles.push(currentTitle);
-          currentTitle = null;
-        }
-      }
-
-      return titles;
+    const config = this._typeConfig[type];
+    if (!config || !config.parseFunction) {
+      throw new Error(`No parse function configured for type: ${type}`);
     }
+
+    // Parse M3U8 lines and create stream objects
+    const lines = content.split('\n');
+    const streams = [];
+    let currentMetadata = null;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+
+      if (line.startsWith('#EXTINF:')) {
+        // Parse EXTINF line
+        const extinfMatch = line.match(/#EXTINF:(-?\d+)(?:\s+(.+))?/);
+        if (!extinfMatch) continue;
+
+        const duration = parseInt(extinfMatch[1]) || 0;
+        const attributes = extinfMatch[2] || '';
+        
+        currentMetadata = {
+          duration,
+          type: type,
+        };
+
+        // Parse attributes (e.g., tvg-id, tvg-name, group-title, etc.)
+        const attrPattern = /([\w-]+)="([^"]+)"/g;
+        let attrMatch;
+        while ((attrMatch = attrPattern.exec(attributes)) !== null) {
+          const [, key, value] = attrMatch;
+          currentMetadata[key] = value;
+        }
+
+        // Extract title name (last part after comma)
+        const titleMatch = attributes.match(/,(.+)$/);
+        if (titleMatch) {
+          currentMetadata.titleName = titleMatch[1].trim();
+        }
+
+      } else if (line && !line.startsWith('#') && currentMetadata) {
+        // URL line - create stream object with metadata and URL
+        streams.push({
+          ...currentMetadata,
+          url: line
+        });
+        currentMetadata = null;
+      }
+    }
+    
+    // Route to type-specific parser
+    const titles = config.parseFunction(streams);
+    
+    return {
+      titles,
+      streamCount: streams.length
+    };
   }
 
   /**
@@ -320,7 +317,7 @@ export class AGTVProvider extends BaseIPTVProvider {
             [this.providerId, type, 'metadata', `list-${page}.m3u8`]
           );
 
-          const titles = this._parseM3U8Content(m3u8Content, type);
+          const { titles, streamCount } = this._parseM3U8Content(m3u8Content, type);
 
           if (!titles || titles.length === 0) {
             break;
@@ -328,8 +325,10 @@ export class AGTVProvider extends BaseIPTVProvider {
           
           allTitles.push(...titles);
 
-          // If less than threshold, we've reached the end
-          if (titles.length < config.pageSizeThreshold) {
+          // Check stream count (not title count) against threshold
+          // For TV shows, multiple streams are grouped into one title,
+          // so we need to check the actual stream count to determine if there are more pages
+          if (streamCount < config.pageSizeThreshold) {
             break;
           }
 
@@ -355,7 +354,7 @@ export class AGTVProvider extends BaseIPTVProvider {
           [this.providerId, type, 'metadata', 'list.m3u8']
         );
 
-        const titles = this._parseM3U8Content(m3u8Content, type);
+        const { titles } = this._parseM3U8Content(m3u8Content, type);
         allTitles.push(...titles);
         this.logger.info(`${type}: Loaded ${titles.length} titles`);
       } catch (error) {
