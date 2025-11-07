@@ -13,7 +13,7 @@ WORKDIR /app/web-ui
 RUN npm install && npm cache clean --force
 
 # Copy UI source and build
-COPY web-ui/ ./web-ui/
+COPY web-ui/ ./
 RUN npm run build
 
 # Stage 2: Build API dependencies
