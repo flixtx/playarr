@@ -919,6 +919,10 @@ export class TMDBProvider extends BaseProvider {
       // Update in-memory cache to keep it in sync with disk
       this._mainTitlesCache = updatedTitles;
       this.logger.info(`Saved ${newMainTitles.length} main titles (total: ${updatedTitles.length} titles)`);
+      
+      // Refresh API cache
+      await this.refreshAPICache('titles');
+      
       return updatedTitles;
     } catch (error) {
       this.logger.error(`Error saving main titles: ${error.message}`);

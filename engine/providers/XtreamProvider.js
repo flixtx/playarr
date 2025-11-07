@@ -357,7 +357,7 @@ export class XtreamProvider extends BaseIPTVProvider {
       this.logger.debug(`${type}: Normalized categories: ${normalizedCategories.length}`);
 
       // Merge with data directory to get enabled status
-      this.saveCategories(type, normalizedCategories);
+      await this.saveCategories(type, normalizedCategories);
       
       // Load merged categories with enabled status from data directory
       const categoriesWithStatus = this.loadCategories(type);
@@ -515,7 +515,7 @@ export class XtreamProvider extends BaseIPTVProvider {
       this.logger.warn(`Failed to fetch extended info for ${type} ${titleId}: ${errorMessage}`);
       
       // Add to ignored list since extended info fetch failure indicates content issue
-      this.addIgnoredTitle(type, titleId, `Extended info fetch failed: ${errorMessage}`);
+      await this.addIgnoredTitle(type, titleId, `Extended info fetch failed: ${errorMessage}`);
       
       return null;
     }        

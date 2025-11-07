@@ -242,7 +242,7 @@ export class BaseIPTVProvider extends BaseProvider {
    * @param {Array<{category_id: number|string, category_name: string}>} categories - Array of category data objects
    * @returns {Object} Saved category data object
    */
-  saveCategories(type, categories) {
+  async saveCategories(type, categories) {
     this.logger.debug(`Saving ${categories.length} categories for ${type}`);
 
     const now = new Date().toISOString();
@@ -290,6 +290,10 @@ export class BaseIPTVProvider extends BaseProvider {
       // Save as plain array (no wrapper object)
       this.data.set(allCategories, ...categoriesCacheKey);
       this.logger.info(`Saved ${mergedCategories.length} categories for ${type}`);
+      
+      // Refresh API cache
+      await this.refreshAPICache(`${this.providerId}.categories`);
+      
       return { saved: mergedCategories.length };
     } catch (error) {
       this.logger.error(`Error saving categories for ${type}: ${error.message}`);
@@ -483,6 +487,10 @@ export class BaseIPTVProvider extends BaseProvider {
       // Update in-memory cache to keep it in sync with disk
       this._titlesCache = allTitles;
       this.logger.info(`Saved ${mergedTitles.length} titles`);
+      
+      // Refresh API cache
+      await this.refreshAPICache(`${this.providerId}.titles`);
+      
       return { saved: mergedTitles.length };
     } catch (error) {
       this.logger.error(`Error saving titles: ${error.message}`);
@@ -543,7 +551,7 @@ export class BaseIPTVProvider extends BaseProvider {
    * @param {string} type - Media type ('movies' or 'tvshows')
    * @param {Object<string, string>} ignoredTitles - Object mapping title_id to reason for ignoring
    */
-  saveIgnoredTitles(type, ignoredTitles) {
+  async saveIgnoredTitles(type, ignoredTitles) {
     try {
       // Load existing consolidated ignored titles
       const allIgnored = this.data.get('titles', `${this.providerId}.ignored.json`) || {};
@@ -566,6 +574,9 @@ export class BaseIPTVProvider extends BaseProvider {
       this.data.set(filteredIgnored, 'titles', `${this.providerId}.ignored.json`);
       const count = Object.keys(ignoredTitles).length;
       this.logger.info(`Saved ${count} ignored ${type} titles`);
+      
+      // Refresh API cache
+      await this.refreshAPICache(`${this.providerId}.ignored`);
     } catch (error) {
       this.logger.error(`Error saving ignored titles for ${type}: ${error.message}`);
     }
@@ -577,13 +588,16 @@ export class BaseIPTVProvider extends BaseProvider {
    * Accepts the full ignored object with title_key format (no type separation)
    * @param {Object<string, string>} allIgnored - Object mapping title_key to reason for ignoring
    */
-  saveAllIgnoredTitles(allIgnored) {
+  async saveAllIgnoredTitles(allIgnored) {
     try {
       this.data.set(allIgnored, 'titles', `${this.providerId}.ignored.json`);
       // Update in-memory cache to keep it in sync with disk
       this._ignoredCache = { ...allIgnored };
       const count = Object.keys(allIgnored).length;
       this.logger.info(`Saved ${count} ignored titles`);
+      
+      // Refresh API cache
+      await this.refreshAPICache(`${this.providerId}.ignored`);
     } catch (error) {
       this.logger.error(`Error saving ignored titles: ${error.message}`);
     }
@@ -595,10 +609,10 @@ export class BaseIPTVProvider extends BaseProvider {
    * @param {string} titleId - Title ID to ignore
    * @param {string} reason - Reason for ignoring (e.g., "Extended info fetch failed", "TMDB matching failed")
    */
-  addIgnoredTitle(type, titleId, reason) {
+  async addIgnoredTitle(type, titleId, reason) {
     const ignoredTitles = this.loadIgnoredTitles(type);
     ignoredTitles[titleId] = reason;
-    this.saveIgnoredTitles(type, ignoredTitles);
+    await this.saveIgnoredTitles(type, ignoredTitles);
   }
 }
 

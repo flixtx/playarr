@@ -116,7 +116,7 @@ export class ProcessMainTitlesJob extends BaseJob {
       const currentIgnoredCount = Object.keys(allIgnored).length;
       if (currentIgnoredCount !== lastSavedIgnoredCount) {
         try {
-          providerInstance.saveAllIgnoredTitles(allIgnored);
+          await providerInstance.saveAllIgnoredTitles(allIgnored);
           this.logger.debug(`[${providerId}] Saved ignored titles via progress callback`);
           lastSavedIgnoredCount = currentIgnoredCount;
         } catch (error) {
