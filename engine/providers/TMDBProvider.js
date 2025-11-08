@@ -400,6 +400,24 @@ export class TMDBProvider extends BaseProvider {
       return;
     }
 
+    // Filter to only process newly created titles (createdAt == lastUpdated)
+    // Titles without similar data that aren't newly created were already processed
+    // and just didn't find matches, so we skip them to avoid unnecessary API calls
+    const titlesToProcess = allMainTitles.filter(title => {
+      // Skip titles without createdAt or lastUpdated (legacy data)
+      if (!title.createdAt || !title.lastUpdated) {
+        return false;
+      }
+      
+      // Only process if title was just created (createdAt == lastUpdated)
+      return title.createdAt === title.lastUpdated;
+    });
+
+    if (titlesToProcess.length === 0) {
+      this.logger.info('No titles need similar titles enrichment (no newly created titles)');
+      return;
+    }
+
     // Create a Set of available title_ids for fast lookup (for filtering similar titles)
     // Include all titles, not just one type
     const availableTitleIds = new Set(allMainTitles.map(t => t.title_id));
@@ -407,7 +425,7 @@ export class TMDBProvider extends BaseProvider {
     // Create a Set of available title_keys for matching similar titles
     const availableTitleKeys = new Set(allMainTitles.map(t => t.title_key || generateTitleKey(t.type, t.title_id)));
     
-    this.logger.info(`Enriching similar titles for ${allMainTitles.length} main titles...`);
+    this.logger.info(`Enriching similar titles for ${titlesToProcess.length} newly created titles (${allMainTitles.length - titlesToProcess.length} skipped)...`);
 
     const updatedTitles = [];
     let processedCount = 0;
@@ -432,13 +450,13 @@ export class TMDBProvider extends BaseProvider {
 
     // Register for progress tracking
     const progressKey = 'similar_titles';
-    let totalRemaining = allMainTitles.length;
+    let totalRemaining = titlesToProcess.length;
     this.registerProgress(progressKey, totalRemaining, saveCallback);
 
     try {
       // Process in batches
-      for (let i = 0; i < allMainTitles.length; i += batchSize) {
-        const batch = allMainTitles.slice(i, i + batchSize);
+      for (let i = 0; i < titlesToProcess.length; i += batchSize) {
+        const batch = titlesToProcess.slice(i, i + batchSize);
 
         await Promise.all(batch.map(async (mainTitle) => {
           try {
@@ -475,13 +493,13 @@ export class TMDBProvider extends BaseProvider {
           }
         }));
 
-        totalRemaining = allMainTitles.length - processedCount;
+        totalRemaining = titlesToProcess.length - processedCount;
         this.updateProgress(progressKey, totalRemaining);
 
         // Log progress
-        if ((i + batchSize) % 100 === 0 || i + batchSize >= allMainTitles.length) {
+        if ((i + batchSize) % 100 === 0 || i + batchSize >= titlesToProcess.length) {
           this.logger.debug(
-            `Progress: ${Math.min(i + batchSize, allMainTitles.length)}/${allMainTitles.length} titles processed for similar titles enrichment`
+            `Progress: ${Math.min(i + batchSize, titlesToProcess.length)}/${titlesToProcess.length} titles processed for similar titles enrichment`
           );
         }
       }
