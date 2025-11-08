@@ -28,6 +28,7 @@ import { CategoriesManager } from './managers/categories.js';
 import { StreamManager } from './managers/stream.js';
 import { PlaylistManager } from './managers/playlist.js';
 import { TMDBManager } from './managers/tmdb.js';
+import { XtreamManager } from './managers/xtream.js';
 
 // Import router classes
 import AuthRouter from './routes/auth.js';
@@ -43,6 +44,7 @@ import PlaylistRouter from './routes/playlist.js';
 import CacheRouter from './routes/cache.js';
 import TMDBRouter from './routes/tmdb.js';
 import HealthcheckRouter from './routes/healthcheck.js';
+import XtreamRouter from './routes/xtream.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -105,6 +107,7 @@ async function initialize() {
     const streamManager = new StreamManager(database);
     const playlistManager = new PlaylistManager(database);
     const tmdbManager = new TMDBManager(settingsManager);
+    const xtreamManager = new XtreamManager(database, titlesManager);
 
     // Initialize user manager (creates default admin user)
     await userManager.initialize();
@@ -124,6 +127,7 @@ async function initialize() {
     const cacheRouter = new CacheRouter(cacheService, fileStorage, titlesManager, statsManager, categoriesManager, database);
     const tmdbRouter = new TMDBRouter(tmdbManager, database);
     const healthcheckRouter = new HealthcheckRouter(fileStorage, settingsManager);
+    const xtreamRouter = new XtreamRouter(xtreamManager, database);
 
     // Step 4: Register routes
     app.use('/api/auth', authRouter.router);
@@ -139,6 +143,7 @@ async function initialize() {
     app.use('/api/cache', cacheRouter.router);
     app.use('/api/tmdb', tmdbRouter.router);
     app.use('/api/healthcheck', healthcheckRouter.router);
+    app.use('/player_api.php', xtreamRouter.router); // Xtream Code API at specific path
 
     // Static file serving for React app
     // Serve static files from React build directory
