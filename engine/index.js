@@ -44,8 +44,8 @@ async function main() {
       {
         name: 'processMainTitles',
         path: path.join(__dirname, 'workers', 'processMainTitles.js'),
-        interval: '1m', // Every 3 minutes
-        timeout: '30s', // First run 5 minutes after startup
+        interval: '5m', // Every 5 minutes
+        timeout: '1m', // First run 1 minute after startup
         worker: {
           workerData: {
             cacheDir: CACHE_DIR,
