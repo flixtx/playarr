@@ -813,6 +813,34 @@ class MongoDatabaseService {
         {},
         'titles.type'
       );
+      // Index for sorting by title (used in getTitles)
+      await this._createIndexIfNotExists(
+        titlesCollection,
+        { title: 1 },
+        {},
+        'titles.title'
+      );
+      // Index for year/release_date filtering
+      await this._createIndexIfNotExists(
+        titlesCollection,
+        { release_date: 1 },
+        {},
+        'titles.release_date'
+      );
+      // Compound index for filtering by type and sorting by title (common query pattern)
+      await this._createIndexIfNotExists(
+        titlesCollection,
+        { type: 1, title: 1 },
+        {},
+        'titles.type + title'
+      );
+      // Compound index for filtering by type and release_date (year filtering)
+      await this._createIndexIfNotExists(
+        titlesCollection,
+        { type: 1, release_date: 1 },
+        {},
+        'titles.type + release_date'
+      );
       
       // Create indexes for provider_titles collection
       const providerTitlesCollection = this.db.collection('provider_titles');
