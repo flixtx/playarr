@@ -29,14 +29,6 @@ export class ProcessMainTitlesJob extends BaseJob {
     let lastExecution = null;
 
     try {
-      // Check if ProcessProvidersTitlesJob is currently running
-      // This prevents processMainTitles from running while providers are being fetched
-      const providersJobHistory = await this.mongoData.getJobHistory('ProcessProvidersTitlesJob');
-      if (providersJobHistory && providersJobHistory.status === 'running') {
-        this.logger.info('Skipping execution - ProcessProvidersTitlesJob is currently running. Will retry on next schedule.');
-        return { movies: 0, tvShows: 0 }; // Return empty result to indicate skip
-      }
-
       // Get last execution time from job history BEFORE setting status
       // This ensures we have the correct last_execution value from previous successful run
       const jobHistory = await this.mongoData.getJobHistory(jobName);

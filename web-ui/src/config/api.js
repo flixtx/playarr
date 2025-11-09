@@ -48,4 +48,8 @@ export const API_ENDPOINTS = {
     settings: {
         tmdbToken: '/settings/tmdb_token',
     },
+
+    // Jobs endpoints
+    jobs: '/jobs',
+    triggerJob: (jobName) => `/jobs/${jobName}/trigger`,
 };

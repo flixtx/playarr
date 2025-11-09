@@ -28,6 +28,7 @@ import { StreamManager } from './managers/stream.js';
 import { PlaylistManager } from './managers/playlist.js';
 import { TMDBManager } from './managers/tmdb.js';
 import { XtreamManager } from './managers/xtream.js';
+import { JobsManager } from './managers/jobs.js';
 
 // Import router classes
 import AuthRouter from './routes/auth.js';
@@ -43,6 +44,7 @@ import PlaylistRouter from './routes/playlist.js';
 import TMDBRouter from './routes/tmdb.js';
 import HealthcheckRouter from './routes/healthcheck.js';
 import XtreamRouter from './routes/xtream.js';
+import JobsRouter from './routes/jobs.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -117,6 +119,7 @@ async function initialize() {
     const playlistManager = new PlaylistManager(database);
     const tmdbManager = new TMDBManager(settingsManager);
     const xtreamManager = new XtreamManager(database, titlesManager);
+    const jobsManager = new JobsManager(database);
 
     // Initialize user manager (creates default admin user)
     await userManager.initialize();
@@ -136,6 +139,7 @@ async function initialize() {
     const tmdbRouter = new TMDBRouter(tmdbManager, database);
     const healthcheckRouter = new HealthcheckRouter(database, settingsManager);
     const xtreamRouter = new XtreamRouter(xtreamManager, database, streamManager);
+    const jobsRouter = new JobsRouter(jobsManager, database);
 
     // Step 4: Register routes
     app.use('/api/auth', authRouter.router);
@@ -144,6 +148,7 @@ async function initialize() {
     app.use('/api/settings', settingsRouter.router);
     app.use('/api/stats', statsRouter.router);
     app.use('/api/titles', titlesRouter.router);
+    app.use('/api/jobs', jobsRouter.router);
     app.use('/api/iptv/providers', providersRouter.router); // Must come before /api/iptv
     app.use('/api/iptv', categoriesRouter.router);
     app.use('/api/stream', streamRouter.router);
