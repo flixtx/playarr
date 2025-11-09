@@ -546,6 +546,49 @@ export class MongoDataService {
   }
 
   /**
+   * Update job status in MongoDB
+   * @param {string} jobName - Job name (e.g., "ProcessProvidersTitlesJob")
+   * @param {string} status - Job status: "running" | "cancelled" | "completed" | "failed"
+   * @param {string} [providerId=null] - Optional provider ID for provider-specific jobs
+   * @returns {Promise<void>}
+   */
+  async updateJobStatus(jobName, status, providerId = null) {
+    const collection = this.db.collection('job_history');
+    const now = new Date();
+    
+    const filter = {
+      job_name: jobName,
+      ...(providerId && { provider_id: providerId })
+    };
+    
+    await collection.updateOne(
+      filter,
+      {
+        $set: {
+          status: status,
+          lastUpdated: now
+        },
+        $setOnInsert: {
+          createdAt: now,
+          execution_count: 0
+        }
+      },
+      { upsert: true }
+    );
+  }
+
+  /**
+   * Get current job status
+   * @param {string} jobName - Job name
+   * @param {string} [providerId=null] - Optional provider ID
+   * @returns {Promise<string|null>} Job status or null if not found
+   */
+  async getJobStatus(jobName, providerId = null) {
+    const history = await this.getJobHistory(jobName, providerId);
+    return history?.status || null;
+  }
+
+  /**
    * Update job history in MongoDB
    * @param {string} jobName - Job name (e.g., "ProcessProvidersTitlesJob")
    * @param {Object} result - Execution result object
@@ -561,12 +604,16 @@ export class MongoDataService {
       ...(providerId && { provider_id: providerId })
     };
     
+    // Determine status from result
+    const status = result.error ? 'failed' : 'completed';
+    
     await collection.updateOne(
       filter,
       {
         $set: {
           last_execution: now,
           last_result: result,
+          status: status,
           lastUpdated: now
         },
         $inc: { execution_count: 1 },

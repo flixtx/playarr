@@ -13,6 +13,7 @@ This document describes the MongoDB schema for Playarr, including entity structu
 7. [settings](#settings)
 8. [cache_policy](#cache_policy)
 9. [stats](#stats)
+10. [job_history](#job_history)
 
 ---
 
@@ -517,6 +518,72 @@ db.stats.findOne({})
 db.stats.updateOne(
   {},
   { $set: { total_requests: 1000, lastUpdated: new Date() } }
+)
+```
+
+---
+
+## job_history
+
+Job execution tracking and status management for engine jobs.
+
+### Schema
+
+```javascript
+{
+  _id: ObjectId,                     // MongoDB auto-generated ID
+  job_name: String,                  // Job name: "ProcessProvidersTitlesJob" | "ProcessMainTitlesJob" | "MonitorConfigurationJob" | "PurgeProviderCacheJob"
+  provider_id: String,               // Optional, for provider-specific jobs
+  status: String,                    // Job status: "running" | "cancelled" | "completed" | "failed"
+  last_execution: ISODate,           // Last execution timestamp
+  execution_count: Number,            // Total successful executions
+  last_result: Object,               // Last execution result (varies by job type)
+  last_error: String,                // Last error message (if failed)
+  createdAt: ISODate,                // Document creation timestamp
+  lastUpdated: ISODate               // Last update timestamp
+}
+```
+
+### Status Lifecycle
+
+1. **running**: Job is currently executing
+2. **cancelled**: Job was cancelled due to configuration changes (automatically retriggered)
+3. **completed**: Job finished successfully
+4. **failed**: Job encountered an error during execution
+
+When a job is cancelled, it is automatically retriggered after a short delay (5 seconds) to allow configuration changes to settle.
+
+### Indexes
+
+| Index | Type | Purpose |
+|-------|------|---------|
+| `{ job_name: 1 }` | Single | Efficient lookup by job name |
+| `{ job_name: 1, provider_id: 1 }` | Compound | For provider-specific jobs (if needed) |
+| `{ status: 1 }` | Single | Query running jobs for cancellation |
+
+### Relations
+
+- **No direct relations** - Job history tracks execution state, not data relationships.
+
+### Query Examples
+
+```javascript
+// Get job history
+db.job_history.findOne({ job_name: "ProcessProvidersTitlesJob" })
+
+// Get status of a job
+db.job_history.findOne(
+  { job_name: "ProcessProvidersTitlesJob" },
+  { projection: { status: 1 } }
+)
+
+// Find all running jobs
+db.job_history.find({ status: "running" })
+
+// Update job status
+db.job_history.updateOne(
+  { job_name: "ProcessProvidersTitlesJob" },
+  { $set: { status: "cancelled", lastUpdated: new Date() } }
 )
 ```
 

@@ -145,6 +145,19 @@ export class MonitorConfigurationJob extends BaseJob {
         }
       }
 
+      // Cancel running jobs if providers changed
+      if (updatedCount > 0) {
+        const jobsToCancel = ['ProcessProvidersTitlesJob', 'ProcessMainTitlesJob'];
+        
+        for (const jobName of jobsToCancel) {
+          const status = await this.mongoData.getJobStatus(jobName);
+          if (status === 'running') {
+            await this.mongoData.updateJobStatus(jobName, 'cancelled');
+            this.logger.info(`Cancelled ${jobName} due to provider configuration changes`);
+          }
+        }
+      }
+
       return updatedCount;
     } catch (error) {
       this.logger.error(`Error checking providers: ${error.message}`);

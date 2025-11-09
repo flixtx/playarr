@@ -28,6 +28,9 @@ export class ProcessMainTitlesJob extends BaseJob {
     let lastExecution = null;
 
     try {
+      // Set status to "running" at start
+      await this.mongoData.updateJobStatus(jobName, 'running');
+
       // Get last execution time from job history
       const jobHistory = await this.mongoData.getJobHistory(jobName);
       if (jobHistory && jobHistory.last_execution) {
@@ -35,6 +38,14 @@ export class ProcessMainTitlesJob extends BaseJob {
         this.logger.info(`Last execution: ${lastExecution.toISOString()}. Processing incremental update.`);
       } else {
         this.logger.info('No previous execution found. Processing full update.');
+      }
+
+      // Check cancellation before loading provider titles
+      const statusBeforeLoading = await this.mongoData.getJobStatus(jobName);
+      if (statusBeforeLoading === 'cancelled') {
+        this.logger.info('Job cancelled before loading provider titles');
+        await this.mongoData.updateJobStatus(jobName, 'cancelled');
+        throw new Error('Job cancelled - provider configuration changed');
       }
 
       // Load provider titles incrementally (only updated since last execution)
@@ -50,8 +61,24 @@ export class ProcessMainTitlesJob extends BaseJob {
       await this.tmdbProvider.loadMainTitles();
       this.logger.info(`All titles loaded into memory (${this.tmdbProvider.getMainTitles().length} main titles)`);
 
+      // Check cancellation before matching TMDB IDs
+      const statusBeforeMatching = await this.mongoData.getJobStatus(jobName);
+      if (statusBeforeMatching === 'cancelled') {
+        this.logger.info('Job cancelled before matching TMDB IDs');
+        await this.mongoData.updateJobStatus(jobName, 'cancelled');
+        throw new Error('Job cancelled - provider configuration changed');
+      }
+
       // Match TMDB IDs for provider titles that don't have one yet
       await this.matchAllTMDBIds();
+
+      // Check cancellation before processing main titles
+      const statusBeforeProcessing = await this.mongoData.getJobStatus(jobName);
+      if (statusBeforeProcessing === 'cancelled') {
+        this.logger.info('Job cancelled before processing main titles');
+        await this.mongoData.updateJobStatus(jobName, 'cancelled');
+        throw new Error('Job cancelled - provider configuration changed');
+      }
 
       // Extract provider titles into dictionary for main title processing
       const providerTitlesByProvider = new Map();
@@ -69,15 +96,24 @@ export class ProcessMainTitlesJob extends BaseJob {
         tvshows_processed: result.tvShows
       });
 
+      // Set status to completed on success
+      await this.mongoData.updateJobStatus(jobName, 'completed');
+
       return result;
     } catch (error) {
       this.logger.error(`Job execution failed: ${error.message}`);
-      // Still update job history with error
-      await this.mongoData.updateJobHistory(jobName, {
-        error: error.message
-      }).catch(err => {
-        this.logger.error(`Failed to update job history: ${err.message}`);
-      });
+      
+      // Only update status if it wasn't already set to cancelled
+      const currentStatus = await this.mongoData.getJobStatus(jobName);
+      if (currentStatus !== 'cancelled') {
+        await this.mongoData.updateJobStatus(jobName, 'failed');
+        // Still update job history with error
+        await this.mongoData.updateJobHistory(jobName, {
+          error: error.message
+        }).catch(err => {
+          this.logger.error(`Failed to update job history: ${err.message}`);
+        });
+      }
       throw error;
     } finally {
       // Unload titles from memory to free resources

@@ -27,6 +27,9 @@ export class ProcessProvidersTitlesJob extends BaseJob {
     let lastExecution = null;
 
     try {
+      // Set status to "running" at start
+      await this.mongoData.updateJobStatus(jobName, 'running');
+
       // Get last execution time from job history
       const jobHistory = await this.mongoData.getJobHistory(jobName);
       if (jobHistory && jobHistory.last_execution) {
@@ -38,6 +41,14 @@ export class ProcessProvidersTitlesJob extends BaseJob {
 
       // Load provider titles incrementally (only updated since last execution)
       for (const [providerId, providerInstance] of this.providers) {
+        // Check if job was cancelled
+        const status = await this.mongoData.getJobStatus(jobName);
+        if (status === 'cancelled') {
+          this.logger.info('Job cancelled due to provider configuration change');
+          await this.mongoData.updateJobStatus(jobName, 'cancelled');
+          throw new Error('Job cancelled - provider configuration changed');
+        }
+
         try {
           await providerInstance.loadProviderTitles(lastExecution);
           await providerInstance.loadIgnoredTitlesFromMongoDB();
@@ -46,8 +57,24 @@ export class ProcessProvidersTitlesJob extends BaseJob {
         }
       }
 
+      // Check cancellation before fetching categories
+      const statusBeforeCategories = await this.mongoData.getJobStatus(jobName);
+      if (statusBeforeCategories === 'cancelled') {
+        this.logger.info('Job cancelled before fetching categories');
+        await this.mongoData.updateJobStatus(jobName, 'cancelled');
+        throw new Error('Job cancelled - provider configuration changed');
+      }
+
       // Fetch categories from all providers first
       await this.fetchAllCategories();
+
+      // Check cancellation before fetching metadata
+      const statusBeforeMetadata = await this.mongoData.getJobStatus(jobName);
+      if (statusBeforeMetadata === 'cancelled') {
+        this.logger.info('Job cancelled before fetching metadata');
+        await this.mongoData.updateJobStatus(jobName, 'cancelled');
+        throw new Error('Job cancelled - provider configuration changed');
+      }
 
       // Then fetch metadata from all providers
       const results = await this.fetchAllMetadata();
@@ -58,15 +85,24 @@ export class ProcessProvidersTitlesJob extends BaseJob {
         results: results
       });
 
+      // Set status to completed on success
+      await this.mongoData.updateJobStatus(jobName, 'completed');
+
       return results;
     } catch (error) {
       this.logger.error(`Job execution failed: ${error.message}`);
-      // Still update job history with error
-      await this.mongoData.updateJobHistory(jobName, {
-        error: error.message
-      }).catch(err => {
-        this.logger.error(`Failed to update job history: ${err.message}`);
-      });
+      
+      // Only update status if it wasn't already set to cancelled
+      const currentStatus = await this.mongoData.getJobStatus(jobName);
+      if (currentStatus !== 'cancelled') {
+        await this.mongoData.updateJobStatus(jobName, 'failed');
+        // Still update job history with error
+        await this.mongoData.updateJobHistory(jobName, {
+          error: error.message
+        }).catch(err => {
+          this.logger.error(`Failed to update job history: ${err.message}`);
+        });
+      }
       throw error;
     } finally {
       // Unload titles from memory to free resources
