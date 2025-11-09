@@ -86,7 +86,7 @@ const JobCard = ({ job, onTrigger, isTriggering }) => {
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <Box sx={{ flex: 1 }}>
                     <Typography variant="h6" gutterBottom>
-                        {job.name}
+                        {job.name} ({job.schedule})
                     </Typography>
                     <Typography variant="body2" color="text.secondary" paragraph>
                         {job.description}
@@ -120,14 +120,6 @@ const JobCard = ({ job, onTrigger, isTriggering }) => {
             <Grid container spacing={2}>
                 <Grid item xs={12} sm={6}>
                     <Typography variant="body2" color="text.secondary">
-                        Schedule:
-                    </Typography>
-                    <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                        {job.schedule}
-                    </Typography>
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                    <Typography variant="body2" color="text.secondary">
                         Last Execution:
                     </Typography>
                     <Typography variant="body2" sx={{ fontWeight: 500 }}>
@@ -136,10 +128,10 @@ const JobCard = ({ job, onTrigger, isTriggering }) => {
                 </Grid>
                 <Grid item xs={12} sm={6}>
                     <Typography variant="body2" color="text.secondary">
-                        Execution Count:
+                        Last Update:
                     </Typography>
                     <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                        {job.executionCount || 0}
+                        {formatDate(job.lastUpdated)}
                     </Typography>
                 </Grid>
                 {job.lastResult && (
@@ -346,14 +338,17 @@ const SettingsJobs = () => {
                     No jobs found.
                 </Typography>
             ) : jobs.length > 0 ? (
-                jobs.map((job) => (
-                    <JobCard
-                        key={job.name}
-                        job={job}
-                        onTrigger={handleTriggerJob}
-                        isTriggering={triggeringJob === job.name}
-                    />
-                ))
+                <Grid container spacing={2}>
+                    {jobs.map((job) => (
+                        <Grid item xs={12} md={4} key={job.name}>
+                            <JobCard
+                                job={job}
+                                onTrigger={handleTriggerJob}
+                                isTriggering={triggeringJob === job.name}
+                            />
+                        </Grid>
+                    ))}
+                </Grid>
             ) : null}
         </Box>
     );
