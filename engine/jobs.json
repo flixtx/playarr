@@ -4,7 +4,7 @@
       "name": "processProvidersTitles",
       "jobHistoryName": "ProcessProvidersTitlesJob",
       "interval": "1h",
-      "timeout": "0",
+      "timeout": "10s",
       "description": "Fetch metadata from IPTV providers",
       "schedule": "Every 1 hour"
     },
