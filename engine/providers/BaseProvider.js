@@ -43,23 +43,6 @@ export class BaseProvider {
   }
 
   /**
-   * Load a specific provider configuration by ID
-   * @param {import('../services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service instance
-   * @param {string} providerId - Provider identifier
-   * @returns {Promise<Object>} Provider configuration object
-   * @throws {Error} If provider is not found
-   */
-  static async loadProvider(mongoData, providerId) {
-    const providers = await this.loadProviders(mongoData);
-    const provider = providers.find(p => p.id === providerId);
-    
-    if (provider) {
-      return provider;
-    }
-    
-    throw new Error(`Provider ${providerId} not found`);
-  }
-  /**
    * @param {Object} providerData - Provider configuration data
    * @param {import('../managers/StorageManager.js').StorageManager} cache - Storage manager instance for temporary cache
    * @param {string} [loggerContext] - Optional logger context override
@@ -274,18 +257,6 @@ export class BaseProvider {
       // Fallback to defaults in memory
       this._cachePolicies = this.getDefaultCachePolicies();
     }
-  }
-
-  /**
-   * Get cache policy TTL for a specific key
-   * @param {string} policyKey - Policy key (e.g., "tmdb/search/movie")
-   * @returns {number|null|undefined} TTL in hours, null for Infinity, or undefined if not found
-   */
-  getCachePolicy(policyKey) {
-    if (!this._cachePolicies) {
-      return undefined;
-    }
-    return this._cachePolicies[policyKey];
   }
 
   /**

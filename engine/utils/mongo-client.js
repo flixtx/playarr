@@ -5,7 +5,7 @@ const logger = createLogger('MongoClient');
 
 /**
  * MongoDB client utility for engine
- * Handles connection, database access, and cleanup
+ * Handles connection and database access
  */
 class MongoClientUtil {
   /**
@@ -50,30 +50,6 @@ class MongoClientUtil {
       throw new Error('Not connected to MongoDB. Call connect() first.');
     }
     return this.db;
-  }
-
-  /**
-   * Get collection
-   * @param {string} collectionName - Collection name
-   * @returns {import('mongodb').Collection}
-   */
-  getCollection(collectionName) {
-    return this.getDatabase().collection(collectionName);
-  }
-
-  /**
-   * Close MongoDB connection
-   * @returns {Promise<void>}
-   */
-  async close() {
-    if (this.client) {
-      try {
-        await this.client.close();
-        logger.info('MongoDB connection closed');
-      } catch (error) {
-        logger.error(`Error closing MongoDB connection: ${error.message}`);
-      }
-    }
   }
 
   /**

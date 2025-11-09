@@ -289,17 +289,6 @@ export class MongoDataService {
   }
 
   /**
-   * Get title streams from MongoDB
-   * @param {string} titleKey - Title key (e.g., "movies-12345")
-   * @returns {Promise<Array<Object>>} Array of stream documents
-   */
-  async getTitleStreams(titleKey) {
-    return await this.db.collection('title_streams')
-      .find({ title_key: titleKey })
-      .toArray();
-  }
-
-  /**
    * Save title streams with optimized bulk operations
    * Called periodically (every 30 seconds) or at end of process
    * Internally batches operations into chunks of 1000
@@ -578,17 +567,6 @@ export class MongoDataService {
   }
 
   /**
-   * Get current job status
-   * @param {string} jobName - Job name
-   * @param {string} [providerId=null] - Optional provider ID
-   * @returns {Promise<string|null>} Job status or null if not found
-   */
-  async getJobStatus(jobName, providerId = null) {
-    const history = await this.getJobHistory(jobName, providerId);
-    return history?.status || null;
-  }
-
-  /**
    * Update job history in MongoDB
    * @param {string} jobName - Job name (e.g., "ProcessProvidersTitlesJob")
    * @param {Object} result - Execution result object
@@ -607,10 +585,14 @@ export class MongoDataService {
     // Determine status from result
     const status = result.error ? 'failed' : 'completed';
     
+    // Separate metadata fields (check timestamps) from result data
+    // These need to be stored at top level for MonitorConfigurationJob to read them
+    const { last_provider_check, last_settings_check, last_policy_check, ...resultData } = result;
+    
     // Build update object
     const update = {
       $set: {
-        last_result: result,
+        last_result: resultData,
         status: status,
         lastUpdated: now
       },
@@ -619,6 +601,17 @@ export class MongoDataService {
         createdAt: now
       }
     };
+    
+    // Store check timestamps at top level if provided (for MonitorConfigurationJob)
+    if (last_provider_check !== undefined) {
+      update.$set.last_provider_check = last_provider_check;
+    }
+    if (last_settings_check !== undefined) {
+      update.$set.last_settings_check = last_settings_check;
+    }
+    if (last_policy_check !== undefined) {
+      update.$set.last_policy_check = last_policy_check;
+    }
     
     // Only update last_execution on successful completion (not on failure or cancellation)
     // This ensures incremental processing can retry failed work
@@ -751,140 +744,5 @@ export class MongoDataService {
     }
   }
 
-  /**
-   * Remove provider from titles.streams object
-   * Efficiently queries title_streams first to find only affected titles
-   * @param {string} providerId - Provider ID to remove
-   * @returns {Promise<{titlesUpdated: number, streamsRemoved: number}>}
-   */
-  async removeProviderFromTitles(providerId) {
-    try {
-      // 1. Get all title_streams for this provider
-      const streams = await this.db.collection('title_streams')
-        .find({ provider_id: providerId })
-        .toArray();
-      
-      if (streams.length === 0) {
-        return { titlesUpdated: 0, streamsRemoved: 0 };
-      }
-      
-      // 2. Extract unique title_key values
-      const titleKeys = [...new Set(streams.map(s => s.title_key))];
-      
-      // 3. Fetch only affected titles
-      const titles = await this.db.collection('titles')
-        .find({ title_key: { $in: titleKeys } })
-        .toArray();
-      
-      if (titles.length === 0) {
-        return { titlesUpdated: 0, streamsRemoved: 0 };
-      }
-      
-      let titlesUpdated = 0;
-      let streamsRemoved = 0;
-      const bulkOps = [];
-      
-      // 4. Process each title
-      for (const title of titles) {
-        const streamsObj = title.streams || {};
-        let titleModified = false;
-        const updatedStreams = { ...streamsObj };
-        
-        // Process each stream entry in the streams object
-        for (const [streamKey, streamValue] of Object.entries(streamsObj)) {
-          // Both movies and TV shows use the same structure: { sources: [...] }
-          // TV shows have additional metadata fields (air_date, name, overview, still_path)
-          if (streamValue && typeof streamValue === 'object' && Array.isArray(streamValue.sources)) {
-            const originalLength = streamValue.sources.length;
-            const filteredSources = streamValue.sources.filter(id => id !== providerId);
-            
-            if (filteredSources.length !== originalLength) {
-              if (filteredSources.length > 0) {
-                // Keep the stream entry with filtered sources (preserve metadata for TV shows)
-                updatedStreams[streamKey] = {
-                  ...streamValue,
-                  sources: filteredSources
-                };
-              } else {
-                // Remove stream entry if no sources left
-                updatedStreams[streamKey] = undefined;
-              }
-              streamsRemoved += (originalLength - filteredSources.length);
-              titleModified = true;
-            }
-          }
-        }
-        
-        // Remove undefined entries (streams with no sources left)
-        for (const key in updatedStreams) {
-          if (updatedStreams[key] === undefined) {
-            delete updatedStreams[key];
-          }
-        }
-        
-        // 5. Prepare update operation
-        if (titleModified) {
-          titlesUpdated++;
-          bulkOps.push({
-            updateOne: {
-              filter: { title_key: title.title_key },
-              update: {
-                $set: {
-                  streams: updatedStreams,
-                  lastUpdated: new Date()
-                }
-              }
-            }
-          });
-        }
-      }
-      
-      // 6. Execute bulk update
-      if (bulkOps.length > 0) {
-        // Process in batches of 1000
-        for (let i = 0; i < bulkOps.length; i += this.batchSize) {
-          const batch = bulkOps.slice(i, i + this.batchSize);
-          await this.db.collection('titles').bulkWrite(batch, { ordered: false });
-        }
-      }
-      
-      return { titlesUpdated, streamsRemoved };
-    } catch (error) {
-      logger.error(`Error removing provider ${providerId} from titles: ${error.message}`);
-      throw error;
-    }
-  }
-
-  /**
-   * Delete all title_streams documents for a provider
-   * @param {string} providerId - Provider ID
-   * @returns {Promise<number>} Number of documents deleted
-   */
-  async deleteProviderTitleStreams(providerId) {
-    try {
-      const result = await this.db.collection('title_streams')
-        .deleteMany({ provider_id: providerId });
-      return result.deletedCount;
-    } catch (error) {
-      logger.error(`Error deleting title streams for provider ${providerId}: ${error.message}`);
-      throw error;
-    }
-  }
-
-  /**
-   * Delete all provider_titles documents for a provider
-   * @param {string} providerId - Provider ID
-   * @returns {Promise<number>} Number of documents deleted
-   */
-  async deleteProviderTitles(providerId) {
-    try {
-      const result = await this.db.collection('provider_titles')
-        .deleteMany({ provider_id: providerId });
-      return result.deletedCount;
-    } catch (error) {
-      logger.error(`Error deleting provider titles for provider ${providerId}: ${error.message}`);
-      throw error;
-    }
-  }
 }
 

@@ -119,23 +119,5 @@ export class JobInitializer {
       throw new Error(`Unknown provider type: ${providerData.type}`);
     }
   }
-
-  /**
-   * Get initialized dependencies
-   * @returns {{cache: StorageManager, mongoData: MongoDataService, providers: Map<string, BaseIPTVProvider>, tmdbProvider: TMDBProvider}} Initialized dependencies
-   * @throws {Error} If dependencies are not initialized
-   */
-  getDependencies() {
-    if (!this.cache || !this.mongoData || !this.providers || !this.tmdbProvider) {
-      throw new Error('Dependencies not initialized. Call initialize() first.');
-    }
-
-    return {
-      cache: this.cache,
-      mongoData: this.mongoData,
-      providers: this.providers,
-      tmdbProvider: this.tmdbProvider
-    };
-  }
 }
 

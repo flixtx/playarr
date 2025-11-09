@@ -403,43 +403,6 @@ export class BaseIPTVProvider extends BaseProvider {
   }
 
   /**
-   * Update titles in memory cache
-   * Merges new titles with existing cache (updates existing, adds new)
-   * @private
-   * @param {TitleData[]} titles - Array of title data objects to merge into cache
-   */
-  updateTitlesInMemory(titles) {
-    if (this._titlesCache === null) {
-      // If cache not initialized, initialize it
-      this._titlesCache = [];
-    }
-
-    // Create map of existing titles by title_key for fast lookup
-    const existingTitleMap = new Map(
-      this._titlesCache.map(t => [t.title_key || generateTitleKey(t.type, t.title_id), t])
-    );
-
-    // Update existing titles and add new ones
-    for (const title of titles) {
-      if (!title.title_id) continue;
-      
-      const titleKey = title.title_key || generateTitleKey(title.type || 'movies', title.title_id);
-      const existingIndex = this._titlesCache.findIndex(t => {
-        const tKey = t.title_key || generateTitleKey(t.type, t.title_id);
-        return tKey === titleKey;
-      });
-
-      if (existingIndex >= 0) {
-        // Update existing title
-        this._titlesCache[existingIndex] = title;
-      } else {
-        // Add new title
-        this._titlesCache.push(title);
-      }
-    }
-  }
-
-  /**
    * Update ignored titles in memory cache
    * Replaces the entire ignored cache with new data
    * @private

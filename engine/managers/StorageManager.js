@@ -136,40 +136,6 @@ export class StorageManager {
   }
 
   /**
-   * Get TTL value for a cache key from in-memory policy
-   * @param {...string} keyParts - Cache key parts
-   * @returns {number|null} TTL in hours (null for Infinity), or null if not found
-   */
-  getCacheTTL(...keyParts) {
-    const policyKey = this._buildPolicyKey(...keyParts);
-    const policies = this._getCachePolicies();
-    return policies[policyKey] ?? null;
-  }
-
-  /**
-   * Check if cache is valid (exists and not expired)
-   * @param {number} [maxAgeHours=24] - Maximum age in hours before cache is considered invalid
-   * @param {...string} keyParts - Cache key parts (providerId is optional)
-   * @returns {boolean} True if cache is valid, false otherwise
-   */
-  isValid(maxAgeHours = 24, ...keyParts) {
-    try {
-      const cachePath = this._buildPath(...keyParts);
-      if (!fs.existsSync(cachePath)) {
-        return false;
-      }
-
-      const stats = fs.statSync(cachePath);
-      const ageMs = Date.now() - stats.mtimeMs;
-      const maxAgeMs = maxAgeHours * 60 * 60 * 1000;
-
-      return ageMs < maxAgeMs;
-    } catch (error) {
-      return false;
-    }
-  }
-
-  /**
    * Check if policy key matches file path (handles dynamic segments)
    * @private
    * @param {string} policyKey - Policy key to check (e.g., "tmdb/tv/{tmdbId}/season")
@@ -320,25 +286,6 @@ export class StorageManager {
   }
 
   /**
-   * Get metadata from cache file
-   * @param {...string} keyParts - Cache key parts (providerId is optional)
-   * @returns {Object|null} Cache metadata or null if cache doesn't exist
-   */
-  getMetadata(...keyParts) {
-    try {
-      const cachePath = this._buildPath(...keyParts);
-      if (!fs.existsSync(cachePath)) {
-        return null;
-      }
-
-      const cacheData = fs.readJsonSync(cachePath);
-      return cacheData.metadata || null;
-    } catch (error) {
-      return null;
-    }
-  }
-
-  /**
    * Save raw text data (like M3U8) to cache
    * @param {string} textData - Text data to cache
    * @param {number|null} [ttlHours] - TTL in hours (null for Infinity). If not provided, will use policy or default.
@@ -383,25 +330,6 @@ export class StorageManager {
     } catch (error) {
       this.logger.error(`Error loading text cache: ${error.message}`);
       return null;
-    }
-  }
-
-  /**
-   * Clear cache for specific key parts (e.g., all cache for a provider)
-   * @param {...string} keyParts - Cache key parts (providerId is optional)
-   */
-  clear(...keyParts) {
-    try {
-      const cachePath = this._buildPath(...keyParts);
-      const targetPath = fs.existsSync(cachePath) && fs.statSync(cachePath).isDirectory()
-        ? cachePath
-        : path.dirname(cachePath);
-      
-      if (fs.existsSync(targetPath)) {
-        fs.removeSync(targetPath);
-      }
-    } catch (error) {
-      this.logger.error(`Error clearing cache: ${error.message}`);
     }
   }
 

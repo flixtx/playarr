@@ -51,17 +51,6 @@ async function main() {
         }
       },
       {
-        name: 'monitorConfiguration',
-        path: path.join(__dirname, 'workers', 'monitorConfiguration.js'),
-        interval: '1m', // Every 1 minute
-        timeout: '30s', // First run 30 seconds after startup
-        worker: {
-          workerData: {
-            cacheDir: CACHE_DIR
-          }
-        }
-      },
-      {
         name: 'purgeProviderCache',
         path: path.join(__dirname, 'workers', 'purgeProviderCache.js'),
         interval: '6h', // Every 6 hours
@@ -139,27 +128,6 @@ async function main() {
         logger.info(`Generated: ${message.result.movies} movies, ${message.result.tvShows} TV shows`);
       }
     } else {
-      // Check if job was cancelled
-      if (message.error && message.error.includes('cancelled')) {
-        logger.info(`Job ${name} was cancelled due to configuration changes, will retrigger`);
-        
-        // Retrigger after a short delay to allow configuration to settle
-        setTimeout(async () => {
-          try {
-            logger.info(`Retriggering ${name} after cancellation`);
-            await bree.run(name);
-          } catch (error) {
-            // If job is already running or scheduled, that's okay
-            if (error.message && error.message.includes('already running')) {
-              logger.debug(`${name} is already running, skipping retrigger`);
-            } else {
-              logger.error(`Error retriggering ${name}: ${error.message}`);
-            }
-          }
-        }, 5000); // 5 second delay
-        return;
-      }
-      
       logger.error(`Job ${name} failed: ${message.error}`);
     }
   });
@@ -171,7 +139,6 @@ async function main() {
     logger.info('Job scheduler started. Jobs will run according to schedule.');
     logger.info('- processProvidersTitles: On startup and every 1 hour');
     logger.info('- processMainTitles: First run in 1 minute, then every 5 minutes (skipped if processProvidersTitles is running)');
-    logger.info('- monitorConfiguration: First run in 30 seconds, then every 1 minute');
     logger.info('- purgeProviderCache: First run in 1 hour, then every 6 hours');
     
     // Keep the process running
