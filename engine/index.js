@@ -10,7 +10,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const CACHE_DIR = process.env.CACHE_DIR || path.join(__dirname, '../cache');
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../data');
 const logger = createLogger('Main');
 
 /**
@@ -22,7 +21,6 @@ async function main() {
 
   // Track job execution state to prevent concurrent execution
   const runningJobs = new Set();
-  let isProcessProvidersTitlesRunning = false;
 
   // Configure Bree.js jobs with schedules
   const bree = new Bree({
@@ -36,8 +34,7 @@ async function main() {
         timeout: 0, // Run immediately on startup
         worker: {
           workerData: {
-            cacheDir: CACHE_DIR,
-            dataDir: DATA_DIR
+            cacheDir: CACHE_DIR
           }
         }
       },
@@ -48,24 +45,21 @@ async function main() {
         timeout: '1m', // First run 1 minute after startup
         worker: {
           workerData: {
-            cacheDir: CACHE_DIR,
-            dataDir: DATA_DIR
+            cacheDir: CACHE_DIR
+          }
+        }
+      },
+      {
+        name: 'purgeProviderCache',
+        path: path.join(__dirname, 'workers', 'purgeProviderCache.js'),
+        interval: '6h', // Every 6 hours
+        timeout: '1h', // First run 1 hour after startup
+        worker: {
+          workerData: {
+            cacheDir: CACHE_DIR
           }
         }
       }
-      // Cache purge job disabled - expiration is now checked on-demand when cache is accessed
-      // {
-      //   name: 'cachePurge',
-      //   path: path.join(__dirname, 'workers', 'cachePurge.js'),
-      //   interval: '15m', // Every 15 minutes
-      //   timeout: 0, // Run immediately on startup
-      //   worker: {
-      //     workerData: {
-      //       cacheDir: CACHE_DIR,
-      //       dataDir: DATA_DIR
-      //     }
-      //   }
-      // }
     ]
   });
 
@@ -73,34 +67,19 @@ async function main() {
   bree.on('worker created', (name) => {
     logger.debug(`Worker created: ${name}`);
     runningJobs.add(name);
-    if (name === 'processProvidersTitles') {
-      isProcessProvidersTitlesRunning = true;
-      logger.debug('processProvidersTitles is now running - processMainTitles will be skipped until it completes');
-    }
   });
 
   bree.on('worker deleted', (name) => {
     logger.debug(`Worker deleted: ${name}`);
     runningJobs.delete(name);
-    if (name === 'processProvidersTitles') {
-      isProcessProvidersTitlesRunning = false;
-      logger.debug('processProvidersTitles completed - processMainTitles can now run');
-    }
   });
 
   // Override the run method to prevent any job from running if it's already running
-  // Also prevent processMainTitles from running when processProvidersTitles is active
   const originalRun = bree.run.bind(bree);
   bree.run = async function(name) {
     // Prevent any job from running if it's already running
     if (runningJobs.has(name)) {
       logger.debug(`Skipping ${name} - already running`);
-      return;
-    }
-    
-    // Special case: prevent processMainTitles from running when processProvidersTitles is active
-    if (name === 'processMainTitles' && isProcessProvidersTitlesRunning) {
-      logger.debug('Skipping processMainTitles - processProvidersTitles is currently running');
       return;
     }
     
@@ -116,7 +95,7 @@ async function main() {
     }
   };
 
-  bree.on('worker message', (name, message) => {
+  bree.on('worker message', async (name, message) => {
     if (message.success) {
       logger.info(`Job ${name} completed successfully`);
       if (name === 'processProvidersTitles' && Array.isArray(message.result)) {
@@ -143,7 +122,8 @@ async function main() {
 
     logger.info('Job scheduler started. Jobs will run according to schedule.');
     logger.info('- processProvidersTitles: On startup and every 1 hour');
-    logger.info('- processMainTitles: First run in 5 minutes, then every 3 minutes (skipped if processProvidersTitles is running)');
+    logger.info('- processMainTitles: First run in 1 minute, then every 5 minutes');
+    logger.info('- purgeProviderCache: First run in 1 hour, then every 6 hours');
     
     // Keep the process running
     process.on('SIGINT', async () => {

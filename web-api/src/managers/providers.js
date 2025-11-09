@@ -34,8 +34,7 @@ class ProvidersManager {
 
   /**
    * Get ignored titles for a specific provider
-   * Reads from data/titles/{providerId}.ignored.json
-   * Enriches with title information from provider's titles data
+   * Optimized to query MongoDB directly for ignored titles only
    * @param {string} providerId - Provider ID
    * @returns {Promise<{response: object, statusCode: number}>}
    */
@@ -50,40 +49,31 @@ class ProvidersManager {
         };
       }
 
-      // Load ignored titles from collection
-      const collectionName = `${providerId}.ignored`;
-      const ignoredTitles = await this._database.getDataObject(collectionName);
+      // Query MongoDB directly for ignored titles for this provider
+      // Ignored titles are in provider_titles collection with ignored: true
+      const collection = this._database.getCollection('provider_titles');
+      const ignoredTitles = await collection.find({
+        provider_id: providerId,
+        ignored: true
+      }).toArray();
 
-      if (!ignoredTitles || typeof ignoredTitles !== 'object') {
+      if (!ignoredTitles || ignoredTitles.length === 0) {
         return {
           response: [],
           statusCode: 200,
         };
       }
 
-      // Get provider titles data to enrich ignored titles with name and year
-      const providerTitlesCollection = `${providerId}.titles`;
-      const providerTitlesArray = await this._database.getDataList(providerTitlesCollection);
-      
-      // Create a Map keyed by title_key for quick lookup
-      const providerTitlesMap = new Map();
-      if (Array.isArray(providerTitlesArray)) {
-        for (const title of providerTitlesArray) {
-          if (title.title_key) {
-            providerTitlesMap.set(title.title_key, title);
-          }
-        }
-      }
-
       // Transform to array format: [{ title_key, issue, name, year }]
-      const ignoredList = Object.entries(ignoredTitles).map(([titleKey, issue]) => {
-        const titleData = providerTitlesMap.get(titleKey);
-        const year = titleData?.release_date ? new Date(titleData.release_date).getFullYear() : null;
+      // The issue/reason is stored in the ignored_reason field, or we can use a default
+      const ignoredList = ignoredTitles.map(title => {
+        const year = title.release_date ? new Date(title.release_date).getFullYear() : null;
+        const titleKey = title.title_key || `${title.type}-${title.tmdb_id}`;
         
         return {
           title_key: titleKey,
-          issue: issue || 'Unknown issue',
-          name: titleData?.title || null,
+          issue: title.ignored_reason || 'Unknown issue',
+          name: title.title || null,
           year: year || null
         };
       });
@@ -136,16 +126,33 @@ class ProvidersManager {
   }
 
   /**
-   * Write all providers to collection
-   * Uses DatabaseService collection-based methods
+   * Write all providers to MongoDB
+   * Deletes all existing providers and inserts new ones
    * @private
    */
   async _writeAllProviders(providers) {
-    // Write the entire providers array directly to the file
-    const filePath = this._database._getCollectionPath(this._providersCollection);
-    const fileStorage = this._database._fileStorage;
-    await fileStorage.writeJsonFile(filePath, providers);
-    this._database.invalidateCollectionCache(this._providersCollection);
+    try {
+      const collection = this._database.getCollection('iptv_providers');
+      const now = new Date();
+      
+      // Delete all existing providers
+      await collection.deleteMany({});
+      
+      // Insert all new providers with timestamps
+      if (providers.length > 0) {
+        const providersWithTimestamps = providers.map(p => ({
+          ...p,
+          lastUpdated: now,
+          createdAt: p.createdAt || now
+        }));
+        await collection.insertMany(providersWithTimestamps);
+      }
+      
+      logger.info(`Saved ${providers.length} providers to MongoDB`);
+    } catch (error) {
+      logger.error('Error writing providers to MongoDB:', error);
+      throw error;
+    }
   }
 
   /**
@@ -296,13 +303,19 @@ class ProvidersManager {
       const wasEnabled = existingProvider.enabled !== false;
       const willBeEnabled = providerData.enabled !== false;
 
-      // If provider is being disabled, remove it from all stream sources
-      if (wasEnabled && !willBeEnabled && this._titlesManager) {
+      // If provider is being disabled, perform cleanup operations
+      if (wasEnabled && !willBeEnabled) {
         try {
-          await this._titlesManager.removeProviderFromStreams(providerId);
+          // Remove provider from titles.streams and main-titles-streams
+          await this._database.removeProviderFromTitles(providerId);
+          
+          // Delete all title_streams for this provider
+          await this._database.deleteProviderTitleStreams(providerId);
+          
+          // Do NOT delete provider_titles (only on delete, not disable)
         } catch (error) {
           // Log error but don't fail the provider update
-          logger.error(`Error removing provider ${providerId} from streams:`, error);
+          logger.error(`Error cleaning up provider ${providerId}: ${error.message}`);
         }
       }
 
@@ -310,10 +323,12 @@ class ProvidersManager {
       this._normalizeUrls(providerData, existingProvider);
 
       // Update provider data (preserve id and other fields)
+      const now = new Date();
       const updatedProvider = {
         ...existingProvider,
         ...providerData,
         id: providerId, // Ensure id doesn't change
+        lastUpdated: now // Update timestamp
       };
 
       // Update in array and save
@@ -340,7 +355,7 @@ class ProvidersManager {
   }
 
   /**
-   * Delete an IPTV provider
+   * Delete an IPTV provider (logical delete)
    */
   async deleteProvider(providerId) {
     try {
@@ -355,8 +370,31 @@ class ProvidersManager {
         };
       }
 
-      // Remove provider from array and save
-      providers.splice(providerIndex, 1);
+      const provider = providers[providerIndex];
+
+      // Perform cleanup operations
+      try {
+        // Remove provider from titles.streams and main-titles-streams
+        await this._database.removeProviderFromTitles(providerId);
+        
+        // Delete all title_streams for this provider
+        await this._database.deleteProviderTitleStreams(providerId);
+        
+        // Delete all provider_titles for this provider (only on delete, not disable)
+        await this._database.deleteProviderTitles(providerId);
+      } catch (error) {
+        // Log error but don't fail the provider deletion
+        logger.error(`Error cleaning up provider ${providerId}: ${error.message}`);
+      }
+
+      // Set deleted: true and update lastUpdated timestamp
+      const now = new Date();
+      providers[providerIndex] = {
+        ...provider,
+        deleted: true,
+        lastUpdated: now
+      };
+      
       await this._writeAllProviders(providers);
 
       // Broadcast WebSocket event

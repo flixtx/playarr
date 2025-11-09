@@ -14,12 +14,16 @@ export class StorageManager {
   /**
    * @param {string} storageDir - Base storage directory path
    * @param {boolean} [wrapData=false] - If true, wraps data in {data: ..., metadata: ...} format (for cache directory)
+   * @param {import('../services/MongoDataService.js').MongoDataService} [mongoData=null] - MongoDB data service for cache policies
    */
-  constructor(storageDir, wrapData = false) {
+  constructor(storageDir, wrapData = false, mongoData = null) {
     this.storageDir = storageDir;
     this.wrapData = wrapData;
     this.logger = createLogger('StorageManager');
-    this.cachePolicyPath = path.join(__dirname, '../../data/settings/cache-policy.json');
+    this.mongoData = mongoData;
+    
+    // In-memory cache for policies (loaded once at startup)
+    this._cachePolicies = {};
   }
 
   /**
@@ -66,75 +70,68 @@ export class StorageManager {
   }
 
   /**
-   * Load cache policy file
-   * @private
-   * @returns {Object} Cache policy object
+   * Initialize storage manager - load cache policies from MongoDB once
+   * Must be called after construction if mongoData is provided
+   * @returns {Promise<void>}
    */
-  _loadCachePolicy() {
-    try {
-      if (fs.existsSync(this.cachePolicyPath)) {
-        return fs.readJsonSync(this.cachePolicyPath);
+  async initialize() {
+    if (this.mongoData) {
+      try {
+        this._cachePolicies = await this.mongoData.getCachePolicies();
+        const policyCount = Object.keys(this._cachePolicies).length;
+        this.logger.info(`Loaded ${policyCount} cache policies from MongoDB`);
+      } catch (error) {
+        this.logger.error(`Error loading cache policies: ${error.message}`);
+        this._cachePolicies = {};
       }
-      return {};
-    } catch (error) {
-      this.logger.error(`Error loading cache policy: ${error.message}`);
-      return {};
     }
   }
 
   /**
-   * Update cache policy file with new TTL value
+   * Register cache policies from a provider
+   * Called by providers during initialization
+   * @param {Object} policies - Policy object with key-value pairs
+   */
+  registerCachePolicies(policies) {
+    // Merge provider policies into shared cache
+    Object.assign(this._cachePolicies, policies);
+    this.logger.debug(`Registered ${Object.keys(policies).length} cache policies`);
+  }
+
+  /**
+   * Get cache policies from memory
+   * @private
+   * @returns {Object} Cache policy object
+   */
+  _getCachePolicies() {
+    return this._cachePolicies;
+  }
+
+  /**
+   * Update cache policy in MongoDB and in-memory cache
    * @private
    * @param {string} policyKey - Policy key (e.g., "tmdb/search/movie")
    * @param {number|null} ttlHours - TTL in hours (null for Infinity)
    */
-  _updateCachePolicy(policyKey, ttlHours) {
+  async _updateCachePolicy(policyKey, ttlHours) {
     try {
-      const policy = this._loadCachePolicy();
-      
       // Only update if key doesn't exist or value changed
-      if (!policy.hasOwnProperty(policyKey) || policy[policyKey] !== ttlHours) {
-        policy[policyKey] = ttlHours;
-        fs.writeJsonSync(this.cachePolicyPath, policy, { spaces: 2 });
+      if (!this._cachePolicies.hasOwnProperty(policyKey) || this._cachePolicies[policyKey] !== ttlHours) {
+        // Update in-memory cache immediately
+        this._cachePolicies[policyKey] = ttlHours;
+        
+        // Update MongoDB (async, don't wait - fire and forget)
+        if (this.mongoData) {
+          this.mongoData.updateCachePolicy(policyKey, ttlHours).catch(error => {
+            this.logger.error(`Error updating cache policy in MongoDB: ${error.message}`);
+          });
+        }
+        
         this.logger.debug(`Updated cache policy: ${policyKey} = ${ttlHours === null ? 'Infinity' : `${ttlHours}h`}`);
       }
     } catch (error) {
       this.logger.error(`Error updating cache policy: ${error.message}`);
       // Don't throw - policy update failure shouldn't break caching
-    }
-  }
-
-  /**
-   * Get TTL value for a cache key from policy
-   * @param {...string} keyParts - Cache key parts
-   * @returns {number|null} TTL in hours (null for Infinity), or null if not found
-   */
-  getCacheTTL(...keyParts) {
-    const policyKey = this._buildPolicyKey(...keyParts);
-    const policy = this._loadCachePolicy();
-    return policy[policyKey] ?? null;
-  }
-
-  /**
-   * Check if cache is valid (exists and not expired)
-   * @param {number} [maxAgeHours=24] - Maximum age in hours before cache is considered invalid
-   * @param {...string} keyParts - Cache key parts (providerId is optional)
-   * @returns {boolean} True if cache is valid, false otherwise
-   */
-  isValid(maxAgeHours = 24, ...keyParts) {
-    try {
-      const cachePath = this._buildPath(...keyParts);
-      if (!fs.existsSync(cachePath)) {
-        return false;
-      }
-
-      const stats = fs.statSync(cachePath);
-      const ageMs = Date.now() - stats.mtimeMs;
-      const maxAgeMs = maxAgeHours * 60 * 60 * 1000;
-
-      return ageMs < maxAgeMs;
-    } catch (error) {
-      return false;
     }
   }
 
@@ -156,7 +153,7 @@ export class StorageManager {
   }
 
   /**
-   * Check if cache is expired based on cache policy
+   * Check if cache is expired based on in-memory cache policy
    * @param {...string} keyParts - Cache key parts
    * @returns {boolean} True if cache is expired or doesn't exist, false if valid or no policy found
    */
@@ -167,16 +164,16 @@ export class StorageManager {
         return true; // Doesn't exist, treat as expired to force fetch
       }
 
-      // Get TTL from policy
+      // Get TTL from in-memory policy
       const policyKey = this._buildPolicyKey(...keyParts);
-      const policy = this._loadCachePolicy();
+      const policies = this._getCachePolicies();
       
-    // Try exact match first
-      let ttlHours = policy[policyKey];
+      // Try exact match first
+      let ttlHours = policies[policyKey];
       
       // If not found, try pattern matching for dynamic keys
       if (ttlHours === undefined) {
-        for (const [policyKeyPattern, ttl] of Object.entries(policy)) {
+        for (const [policyKeyPattern, ttl] of Object.entries(policies)) {
           if (this._matchesPolicyKey(policyKeyPattern, policyKey)) {
             ttlHours = ttl;
             break;
@@ -249,7 +246,7 @@ export class StorageManager {
    * @param {...string} keyParts - Cache key parts (providerId is optional)
    * @throws {Error} If cache save fails
    */
-  set(data, ttlHours, ...keyParts) {
+  async set(data, ttlHours, ...keyParts) {
     // Handle case where ttlHours is not provided (backward compatibility)
     if (typeof ttlHours !== 'number' && ttlHours !== null) {
       // ttlHours is actually the first keyPart
@@ -277,33 +274,14 @@ export class StorageManager {
         fs.writeJsonSync(cachePath, cacheData, { spaces: 2 });
       }
 
-      // Update cache policy if TTL is provided
+      // Update cache policy if TTL is provided (updates MongoDB and in-memory cache)
       if (ttlHours !== undefined) {
         const policyKey = this._buildPolicyKey(...keyParts);
-        this._updateCachePolicy(policyKey, ttlHours);
+        await this._updateCachePolicy(policyKey, ttlHours);
       }
     } catch (error) {
       this.logger.error(`Error saving cache: ${error.message}`);
       throw error;
-    }
-  }
-
-  /**
-   * Get metadata from cache file
-   * @param {...string} keyParts - Cache key parts (providerId is optional)
-   * @returns {Object|null} Cache metadata or null if cache doesn't exist
-   */
-  getMetadata(...keyParts) {
-    try {
-      const cachePath = this._buildPath(...keyParts);
-      if (!fs.existsSync(cachePath)) {
-        return null;
-      }
-
-      const cacheData = fs.readJsonSync(cachePath);
-      return cacheData.metadata || null;
-    } catch (error) {
-      return null;
     }
   }
 
@@ -314,7 +292,7 @@ export class StorageManager {
    * @param {...string} keyParts - Cache key parts (last part should be 'filename.ext' format, e.g., 'movies.m3u8')
    * @throws {Error} If cache save fails
    */
-  setText(textData, ttlHours, ...keyParts) {
+  async setText(textData, ttlHours, ...keyParts) {
     // Handle case where ttlHours is not provided (backward compatibility)
     if (typeof ttlHours !== 'number' && ttlHours !== null) {
       // ttlHours is actually the first keyPart
@@ -326,10 +304,10 @@ export class StorageManager {
       const cachePath = this._buildPath(...keyParts);
       fs.writeFileSync(cachePath, textData, 'utf8');
 
-      // Update cache policy if TTL is provided
+      // Update cache policy if TTL is provided (updates MongoDB and in-memory cache)
       if (ttlHours !== undefined) {
         const policyKey = this._buildPolicyKey(...keyParts);
-        this._updateCachePolicy(policyKey, ttlHours);
+        await this._updateCachePolicy(policyKey, ttlHours);
       }
     } catch (error) {
       this.logger.error(`Error saving text cache: ${error.message}`);
@@ -356,21 +334,23 @@ export class StorageManager {
   }
 
   /**
-   * Clear cache for specific key parts (e.g., all cache for a provider)
-   * @param {...string} keyParts - Cache key parts (providerId is optional)
+   * Remove all cache for a specific provider
+   * @param {string} providerId - Provider identifier
+   * @returns {Promise<void>}
    */
-  clear(...keyParts) {
+  async removeProviderCache(providerId) {
     try {
-      const cachePath = this._buildPath(...keyParts);
-      const targetPath = fs.existsSync(cachePath) && fs.statSync(cachePath).isDirectory()
-        ? cachePath
-        : path.dirname(cachePath);
+      const cacheDir = path.join(this.storageDir, providerId);
       
-      if (fs.existsSync(targetPath)) {
-        fs.removeSync(targetPath);
+      if (fs.existsSync(cacheDir)) {
+        await fs.remove(cacheDir);
+        this.logger.info(`Removed cache directory for provider: ${providerId}`);
+      } else {
+        this.logger.debug(`No cache directory found for provider: ${providerId}`);
       }
     } catch (error) {
-      this.logger.error(`Error clearing cache: ${error.message}`);
+      this.logger.error(`Error removing cache for provider ${providerId}: ${error.message}`);
+      throw error;
     }
   }
 }

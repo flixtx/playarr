@@ -1,4 +1,5 @@
 import { BaseJob } from './BaseJob.js';
+import { generateTitleKey } from '../utils/titleUtils.js';
 
 /**
  * Job for processing main titles
@@ -8,36 +9,72 @@ import { BaseJob } from './BaseJob.js';
 export class ProcessMainTitlesJob extends BaseJob {
   /**
    * @param {import('../managers/StorageManager.js').StorageManager} cache - Storage manager instance for temporary cache
-   * @param {import('../managers/StorageManager.js').StorageManager} data - Storage manager instance for persistent data storage
+   * @param {import('../services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service instance
    * @param {Map<string, import('../providers/BaseIPTVProvider.js').BaseIPTVProvider>} providers - Map of providerId -> provider instance (already initialized)
    * @param {import('../providers/TMDBProvider.js').TMDBProvider} tmdbProvider - TMDB provider singleton instance
    */
-  constructor(cache, data, providers, tmdbProvider) {
-    super('ProcessMainTitlesJob', cache, data, providers, tmdbProvider);
+  constructor(cache, mongoData, providers, tmdbProvider) {
+    super('ProcessMainTitlesJob', cache, mongoData, providers, tmdbProvider);
   }
 
   /**
-   * Execute the job - match TMDB IDs and generate main titles
-   * Processes all titles together internally, returns counts by type for reporting
+   * Execute the job - match TMDB IDs and generate main titles (incremental)
+   * Processes only titles updated since last execution
    * @returns {Promise<{movies: number, tvShows: number}>} Count of generated main titles by type (for reporting)
    */
   async execute() {
     this._validateDependencies();
 
-    try {
-      // Load all provider titles and main titles into memory once at the start
-      // This ensures all subsequent operations use cached data instead of reading from disk
-      this.logger.info('Loading all provider titles and main titles into memory...');
-      for (const [providerId, providerInstance] of this.providers) {
-        providerInstance.loadAllTitles();
-        providerInstance.getAllIgnored(); // Initialize ignored cache as well
-      }
-      // Load main titles into memory (managed by TMDBProvider)
-      this.tmdbProvider.loadMainTitles();
-      this.logger.info(`All provider titles and main titles loaded into memory (${this.tmdbProvider.getMainTitles().length} main titles)`);
+    const jobName = 'ProcessMainTitlesJob';
+    let lastExecution = null;
 
-      // Match TMDB IDs for all provider titles
+    try {
+      // Check if ProcessProvidersTitlesJob is currently running
+      // This prevents processMainTitles from running while providers are being fetched
+      const providersJobHistory = await this.mongoData.getJobHistory('ProcessProvidersTitlesJob');
+      if (providersJobHistory && providersJobHistory.status === 'running') {
+        this.logger.info('Skipping execution - ProcessProvidersTitlesJob is currently running. Will retry on next schedule.');
+        return { movies: 0, tvShows: 0 }; // Return empty result to indicate skip
+      }
+
+      // Get last execution time from job history BEFORE setting status
+      // This ensures we have the correct last_execution value from previous successful run
+      const jobHistory = await this.mongoData.getJobHistory(jobName);
+      if (jobHistory && jobHistory.last_execution) {
+        lastExecution = new Date(jobHistory.last_execution);
+        this.logger.info(`Last execution: ${lastExecution.toISOString()}. Processing incremental update.`);
+      } else {
+        this.logger.info('No previous execution found. Processing full update.');
+      }
+
+      // Set status to "running" at start (after reading last_execution)
+      await this.mongoData.updateJobStatus(jobName, 'running');
+
+      // Load provider titles incrementally (only updated since last execution)
+      for (const [providerId, providerInstance] of this.providers) {
+        await providerInstance.loadProviderTitles(lastExecution);
+      }
+
+      // Match TMDB IDs for provider titles that don't have one yet
       await this.matchAllTMDBIds();
+
+      // Load main titles for provider titles that have TMDB IDs
+      // Main titles use title_key = type-tmdb_id, not type-title_id
+      const mainTitleKeys = new Set();
+      for (const [providerId, providerInstance] of this.providers) {
+        for (const title of providerInstance.getAllTitles()) {
+          if (title.tmdb_id && title.type) {
+            mainTitleKeys.add(generateTitleKey(title.type, title.tmdb_id));
+          }
+        }
+      }
+      
+      if (mainTitleKeys.size > 0) {
+        const mainTitles = await this.tmdbProvider.getMainTitlesByKeys(Array.from(mainTitleKeys));
+        this.tmdbProvider._mainTitlesCache = mainTitles;
+      } else {
+        this.tmdbProvider._mainTitlesCache = [];
+      }
 
       // Extract provider titles into dictionary for main title processing
       const providerTitlesByProvider = new Map();
@@ -46,9 +83,30 @@ export class ProcessMainTitlesJob extends BaseJob {
       }
 
       // Delegate main title processing to TMDBProvider
+      // It will only process titles that need regeneration based on provider title updates
       const result = await this.tmdbProvider.processMainTitles(providerTitlesByProvider);
 
+      // Update job history
+      await this.mongoData.updateJobHistory(jobName, {
+        movies_processed: result.movies,
+        tvshows_processed: result.tvShows
+      });
+
+      // Set status to completed on success
+      await this.mongoData.updateJobStatus(jobName, 'completed');
+
       return result;
+    } catch (error) {
+      this.logger.error(`Job execution failed: ${error.message}`);
+      
+      await this.mongoData.updateJobStatus(jobName, 'failed');
+      // Update job history with error
+      await this.mongoData.updateJobHistory(jobName, {
+        error: error.message
+      }).catch(err => {
+        this.logger.error(`Failed to update job history: ${err.message}`);
+      });
+      throw error;
     } finally {
       // Unload titles from memory to free resources
       try {
@@ -86,17 +144,6 @@ export class ProcessMainTitlesJob extends BaseJob {
 
     this.logger.debug(`[${providerId}] Matching TMDB IDs for ${titlesWithoutTMDB.length} titles...`);
 
-    // Get ignored titles from provider's in-memory cache
-    const allIgnored = providerInstance.getAllIgnored();
-    const initialIgnoredCount = Object.keys(allIgnored).length;
-    
-    // Count initial ignored by type (for return value calculation)
-    const initialIgnoredByType = { movies: 0, tvshows: 0 };
-    for (const titleKey of Object.keys(allIgnored)) {
-      if (titleKey.startsWith('movies-')) initialIgnoredByType.movies++;
-      else if (titleKey.startsWith('tvshows-')) initialIgnoredByType.tvshows++;
-    }
-    
     // Get recommended batch size from TMDB provider
     const batchSize = this.tmdbProvider.getRecommendedBatchSize();
     
@@ -107,11 +154,11 @@ export class ProcessMainTitlesJob extends BaseJob {
     // Track matched by type for return value calculation only
     const matchedCountByType = { movies: 0, tvshows: 0 };
     
+    // Track ignored by type for return value calculation
+    const ignoredCountByType = { movies: 0, tvshows: 0 };
+    
     // Track remaining titles for progress
     let totalRemaining = titlesWithoutTMDB.length;
-    
-    // Track last saved ignored count to avoid saving unchanged state
-    let lastSavedIgnoredCount = initialIgnoredCount;
     
     // Save callback for progress tracking (called every 30 seconds and on completion)
     const saveCallback = async () => {
@@ -126,15 +173,25 @@ export class ProcessMainTitlesJob extends BaseJob {
         updatedTitles.length = 0; // Clear after saving
       }
       
-      // Save all ignored titles together if changed since last save
-      const currentIgnoredCount = Object.keys(allIgnored).length;
-      if (currentIgnoredCount !== lastSavedIgnoredCount) {
-        try {
-          await providerInstance.saveAllIgnoredTitles(allIgnored);
-          this.logger.debug(`[${providerId}] Saved ignored titles via progress callback`);
-          lastSavedIgnoredCount = currentIgnoredCount;
-        } catch (error) {
-          this.logger.error(`[${providerId}] Error saving ignored titles: ${error.message}`);
+      // Save accumulated ignored titles for each type
+      for (const type of ['movies', 'tvshows']) {
+        if (providerInstance._accumulatedIgnoredTitles[type] && 
+            Object.keys(providerInstance._accumulatedIgnoredTitles[type]).length > 0) {
+          try {
+            // Convert title_id to title_key format and save directly
+            const ignoredByTitleKey = Object.fromEntries(
+              Object.entries(providerInstance._accumulatedIgnoredTitles[type]).map(([titleId, reason]) => [
+                `${type}-${titleId}`,
+                reason
+              ])
+            );
+            await providerInstance.saveAllIgnoredTitles(ignoredByTitleKey);
+            const count = Object.keys(providerInstance._accumulatedIgnoredTitles[type]).length;
+            this.logger.debug(`[${providerId}] Saved ${count} accumulated ignored ${type} title(s) via progress callback`);
+            providerInstance._accumulatedIgnoredTitles[type] = {}; // Clear after saving
+          } catch (error) {
+            this.logger.error(`[${providerId}] Error saving accumulated ignored titles for ${type}: ${error.message}`);
+          }
         }
       }
     };
@@ -151,13 +208,7 @@ export class ProcessMainTitlesJob extends BaseJob {
         
         await Promise.all(batch.map(async (title) => {
           const type = title.type;
-          const titleKey = `${type}-${title.title_id}`;
-          
-          // Skip if already ignored (they won't be reprocessed)
-          if (allIgnored.hasOwnProperty(titleKey)) {
-            ignoredCount++;
-            return;
-          }
+          const titleId = title.title_id;
 
           const tmdbId = await this.tmdbProvider.matchTMDBIdForTitle(title, type, providerType);
           
@@ -170,15 +221,14 @@ export class ProcessMainTitlesJob extends BaseJob {
             // Track by type for return value
             if (type === 'movies') matchedCountByType.movies++;
             else if (type === 'tvshows') matchedCountByType.tvshows++;
-            
-            // Remove from ignored list if it was previously ignored
-            if (allIgnored.hasOwnProperty(titleKey)) {
-              delete allIgnored[titleKey];
-            }
           } else {
-            // Add to ignored list with reason
-            allIgnored[titleKey] = 'TMDB matching failed';
+            // Mark as ignored - will be saved via saveCallback
+            providerInstance.addIgnoredTitle(type, titleId, 'TMDB matching failed');
             ignoredCount++;
+            
+            // Track by type for return value
+            if (type === 'movies') ignoredCountByType.movies++;
+            else if (type === 'tvshows') ignoredCountByType.tvshows++;
           }
         }));
 
@@ -199,19 +249,6 @@ export class ProcessMainTitlesJob extends BaseJob {
       // Unregister from progress tracking (will also call save callback)
       providerInstance.unregisterProgress(progressKey);
     }
-
-    // Calculate results by type for return value (for reporting/logging)
-    const ignoredCountByType = { movies: 0, tvshows: 0 };
-    
-    // Count ignored by type from allIgnored changes
-    const finalIgnoredByType = { movies: 0, tvshows: 0 };
-    for (const titleKey of Object.keys(allIgnored)) {
-      if (titleKey.startsWith('movies-')) finalIgnoredByType.movies++;
-      else if (titleKey.startsWith('tvshows-')) finalIgnoredByType.tvshows++;
-    }
-    
-    ignoredCountByType.movies = finalIgnoredByType.movies - initialIgnoredByType.movies;
-    ignoredCountByType.tvshows = finalIgnoredByType.tvshows - initialIgnoredByType.tvshows;
 
     return {
       movies: { 

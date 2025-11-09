@@ -13,10 +13,9 @@ dotenv.config();
 import { createLogger } from './utils/logger.js';
 
 // Import service classes
-import { FileStorageService } from './services/storage.js';
-import { CacheService } from './services/cache.js';
-import { DatabaseService } from './services/database.js';
+import { MongoDatabaseService } from './services/mongodb-database.js';
 import { WebSocketService } from './services/websocket.js';
+import { MongoClient } from 'mongodb';
 
 // Import manager classes
 import { UserManager } from './managers/users.js';
@@ -41,7 +40,6 @@ import CategoriesRouter from './routes/categories.js';
 import ProvidersRouter from './routes/providers.js';
 import StreamRouter from './routes/stream.js';
 import PlaylistRouter from './routes/playlist.js';
-import CacheRouter from './routes/cache.js';
 import TMDBRouter from './routes/tmdb.js';
 import HealthcheckRouter from './routes/healthcheck.js';
 import XtreamRouter from './routes/xtream.js';
@@ -58,6 +56,8 @@ const server = http.createServer(app);
 
 // Module-level variables for graceful shutdown
 let webSocketService = null;
+let mongoClient = null;
+let database = null;
 
 // Middleware
 app.use(cors({
@@ -82,18 +82,27 @@ async function initialize() {
     logger.info('Initializing application...');
 
     // Step 1: Initialize services (bottom-up)
-    // 1. Create CacheService (no dependencies)
-    const cacheService = new CacheService();
+    // 1. Initialize MongoDB connection
+    const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017';
+    const dbName = process.env.MONGODB_DB_NAME || 'playarr';
+    
+    try {
+      logger.info(`Connecting to MongoDB: ${mongoUri}`);
+      mongoClient = new MongoClient(mongoUri, {
+        serverSelectionTimeoutMS: 5000,
+      });
+      await mongoClient.connect();
+      logger.info(`Connected to MongoDB database: ${dbName}`);
+    } catch (error) {
+      logger.error(`Failed to connect to MongoDB: ${error.message}`);
+      logger.error('MongoDB is required. Please ensure MongoDB is running and MONGODB_URI is configured correctly.');
+      throw new Error(`MongoDB connection failed: ${error.message}`);
+    }
 
-    // 2. Create FileStorageService with cacheService
-    const fileStorage = new FileStorageService(cacheService);
-    await fileStorage.initialize();
-    logger.info('File storage initialized');
-
-    // 3. Create DatabaseService with only fileStorage (caching handled internally by FileStorageService)
-    const database = new DatabaseService(fileStorage);
+    // 2. Create MongoDatabaseService (replaces FileStorageService + DatabaseService)
+    database = new MongoDatabaseService(mongoClient, dbName);
     await database.initialize();
-    logger.info('Database service initialized');
+    logger.info('MongoDB database service initialized');
 
     webSocketService = new WebSocketService();
 
@@ -124,9 +133,8 @@ async function initialize() {
     const providersRouter = new ProvidersRouter(providersManager, database);
     const streamRouter = new StreamRouter(streamManager, database);
     const playlistRouter = new PlaylistRouter(playlistManager, database);
-    const cacheRouter = new CacheRouter(cacheService, fileStorage, titlesManager, statsManager, categoriesManager, database);
     const tmdbRouter = new TMDBRouter(tmdbManager, database);
-    const healthcheckRouter = new HealthcheckRouter(fileStorage, settingsManager);
+    const healthcheckRouter = new HealthcheckRouter(database, settingsManager);
     const xtreamRouter = new XtreamRouter(xtreamManager, database, streamManager);
 
     // Step 4: Register routes
@@ -140,7 +148,6 @@ async function initialize() {
     app.use('/api/iptv', categoriesRouter.router);
     app.use('/api/stream', streamRouter.router);
     app.use('/api/playlist', playlistRouter.router);
-    app.use('/api/cache', cacheRouter.router);
     app.use('/api/tmdb', tmdbRouter.router);
     app.use('/api/healthcheck', healthcheckRouter.router);
     app.use('/player_api.php', xtreamRouter.router); // Xtream Code API at specific path
@@ -170,9 +177,6 @@ async function initialize() {
       logger.info(`Server running on port ${PORT}`);
       logger.info(`API available at http://localhost:${PORT}/api`);
       logger.info(`Socket.IO available at ws://localhost:${PORT}/socket.io`);
-      
-      // Initialize API titles cache after server starts
-      await cacheRouter.initializeAPITitlesCache();
     });
   } catch (error) {
     logger.error('Failed to initialize application:', error);
@@ -181,26 +185,41 @@ async function initialize() {
 }
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM received, shutting down gracefully...');
+async function shutdown() {
+  logger.info('Shutting down gracefully...');
+  
+  // Set stopping flag on database
+  if (database) {
+    database.setStopping(true);
+  }
+  
+  // Close HTTP server
   server.close(() => {
     logger.info('HTTP server closed');
-    if (webSocketService) {
-      webSocketService.close();
-    }
-    process.exit(0);
   });
+  
+  // Close WebSocket service
+  if (webSocketService) {
+    webSocketService.close();
+  }
+  
+  // Close MongoDB connection
+  if (mongoClient) {
+    await mongoClient.close();
+    logger.info('MongoDB connection closed');
+  }
+  
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => {
+  logger.info('SIGTERM received');
+  shutdown();
 });
 
 process.on('SIGINT', () => {
-  logger.info('SIGINT received, shutting down gracefully...');
-  server.close(() => {
-    logger.info('HTTP server closed');
-    if (webSocketService) {
-      webSocketService.close();
-    }
-    process.exit(0);
-  });
+  logger.info('SIGINT received');
+  shutdown();
 });
 
 // Start the application

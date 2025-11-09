@@ -11,10 +11,11 @@ export class AGTVProvider extends BaseIPTVProvider {
    * @param {Object} providerData - Provider configuration data
    * @param {import('../managers/StorageManager.js').StorageManager} cache - Storage manager instance for temporary cache
    * @param {import('../managers/StorageManager.js').StorageManager} data - Storage manager instance for persistent data storage
+   * @param {import('../services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service instance
    */
-  constructor(providerData, cache, data) {
+  constructor(providerData, cache, data, mongoData) {
     // AGTV uses 10k batch size since everything is in-memory and extremely fast
-    super(providerData, cache, data, 10000);
+    super(providerData, cache, data, mongoData, 10000);
         
     /**
      * Configuration for each media type
@@ -39,6 +40,18 @@ export class AGTVProvider extends BaseIPTVProvider {
         pageSizeThreshold: 5000, // Continue pagination if >= this many items
         parseFunction: this._parseM3U8TVShows.bind(this)
       }
+    };
+  }
+
+  /**
+   * Get default cache policies for AGTV provider
+   * @returns {Object} Cache policy object
+   */
+  getDefaultCachePolicies() {
+    const providerId = this.providerId;
+    return {
+      [`${providerId}/movies/metadata`]: 6,           // 6 hours (for M3U8 list.m3u8)
+      [`${providerId}/tvshows/metadata`]: 6,          // 6 hours (for M3U8 list-{page}.m3u8)
     };
   }
 
@@ -260,7 +273,7 @@ export class AGTVProvider extends BaseIPTVProvider {
     if (cacheKeyParts.length > 0) {
       // Convert Infinity to null for JSON storage
       const ttl = maxAgeHours === Infinity ? null : maxAgeHours;
-      this.cache.setText(response.data, ttl, ...cacheKeyParts);
+      await this.cache.setText(response.data, ttl, ...cacheKeyParts);
     }
 
     return response.data;
