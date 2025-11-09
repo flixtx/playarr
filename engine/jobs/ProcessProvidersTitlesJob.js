@@ -27,10 +27,8 @@ export class ProcessProvidersTitlesJob extends BaseJob {
     let lastExecution = null;
 
     try {
-      // Set status to "running" at start
-      await this.mongoData.updateJobStatus(jobName, 'running');
-
-      // Get last execution time from job history
+      // Get last execution time from job history BEFORE setting status
+      // This ensures we have the correct last_execution value from previous successful run
       const jobHistory = await this.mongoData.getJobHistory(jobName);
       if (jobHistory && jobHistory.last_execution) {
         lastExecution = new Date(jobHistory.last_execution);
@@ -38,6 +36,9 @@ export class ProcessProvidersTitlesJob extends BaseJob {
       } else {
         this.logger.info('No previous execution found. Processing full update.');
       }
+
+      // Set status to "running" at start (after reading last_execution)
+      await this.mongoData.updateJobStatus(jobName, 'running');
 
       // Load provider titles incrementally (only updated since last execution)
       for (const [providerId, providerInstance] of this.providers) {

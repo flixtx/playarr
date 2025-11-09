@@ -607,20 +607,28 @@ export class MongoDataService {
     // Determine status from result
     const status = result.error ? 'failed' : 'completed';
     
+    // Build update object
+    const update = {
+      $set: {
+        last_result: result,
+        status: status,
+        lastUpdated: now
+      },
+      $inc: { execution_count: 1 },
+      $setOnInsert: {
+        createdAt: now
+      }
+    };
+    
+    // Only update last_execution on successful completion (not on failure or cancellation)
+    // This ensures incremental processing can retry failed work
+    if (!result.error) {
+      update.$set.last_execution = now;
+    }
+    
     await collection.updateOne(
       filter,
-      {
-        $set: {
-          last_execution: now,
-          last_result: result,
-          status: status,
-          lastUpdated: now
-        },
-        $inc: { execution_count: 1 },
-        $setOnInsert: {
-          createdAt: now
-        }
-      },
+      update,
       { upsert: true }
     );
   }
