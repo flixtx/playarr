@@ -1,5 +1,8 @@
 import express from 'express';
 import { createRequireApiKey } from '../middleware/apiKey.js';
+import { createLogger } from '../utils/logger.js';
+
+const logger = createLogger('PlaylistRouter');
 
 /**
  * Get the base URL from the request, respecting X-Forwarded-* headers
@@ -78,7 +81,7 @@ class PlaylistRouter {
         res.setHeader('Content-Type', 'text/plain');
         return res.send(m3uContent);
       } catch (error) {
-        console.error('Get M3U8 playlist error:', error);
+        logger.error('Get M3U8 playlist error:', error);
         return res.status(500).json({ error: 'Failed to get playlist' });
       }
     });
@@ -102,7 +105,7 @@ class PlaylistRouter {
 
         return res.status(200).json(mediaFiles);
       } catch (error) {
-        console.error('Get media files mapping error:', error);
+        logger.error('Get media files mapping error:', error);
         return res.status(500).json({ error: 'Failed to get media files mapping' });
       }
     });

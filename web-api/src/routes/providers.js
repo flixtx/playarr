@@ -1,6 +1,9 @@
 import express from 'express';
 import { createRequireAuth } from '../middleware/auth.js';
 import { createRequireAdmin } from '../middleware/admin.js';
+import { createLogger } from '../utils/logger.js';
+
+const logger = createLogger('ProvidersRouter');
 
 /**
  * Providers router for handling IPTV provider endpoints
@@ -33,7 +36,7 @@ class ProvidersRouter {
         const result = await this._providersManager.getProviders();
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Get providers error:', error);
+        logger.error('Get providers error:', error);
         return res.status(500).json({ error: 'Failed to get providers' });
       }
     });
@@ -53,7 +56,7 @@ class ProvidersRouter {
         const result = await this._providersManager.createProvider(providerData);
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Create provider error:', error);
+        logger.error('Create provider error:', error);
         return res.status(500).json({ error: 'Failed to create provider' });
       }
     });
@@ -67,7 +70,7 @@ class ProvidersRouter {
         const result = await this._providersManager.getProviderPriorities();
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Get provider priorities error:', error);
+        logger.error('Get provider priorities error:', error);
         return res.status(500).json({ error: 'Failed to get provider priorities' });
       }
     });
@@ -87,7 +90,7 @@ class ProvidersRouter {
         const result = await this._providersManager.updateProviderPriorities(prioritiesData);
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Update provider priorities error:', error);
+        logger.error('Update provider priorities error:', error);
         return res.status(500).json({ error: 'Failed to update provider priorities' });
       }
     });
@@ -102,7 +105,7 @@ class ProvidersRouter {
         const result = await this._providersManager.getProvider(provider_id);
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Get provider error:', error);
+        logger.error('Get provider error:', error);
         return res.status(500).json({ error: 'Failed to get provider' });
       }
     });
@@ -123,7 +126,7 @@ class ProvidersRouter {
         const result = await this._providersManager.updateProvider(provider_id, providerData);
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Update provider error:', error);
+        logger.error('Update provider error:', error);
         return res.status(500).json({ error: 'Failed to update provider' });
       }
     });
@@ -144,7 +147,7 @@ class ProvidersRouter {
         
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Delete provider error:', error);
+        logger.error('Delete provider error:', error);
         return res.status(500).json({ error: 'Failed to delete provider' });
       }
     });
@@ -159,7 +162,7 @@ class ProvidersRouter {
         const result = await this._providersManager.getIgnoredTitles(provider_id);
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Get ignored titles error:', error);
+        logger.error('Get ignored titles error:', error);
         return res.status(500).json({ error: 'Failed to get ignored titles' });
       }
     });

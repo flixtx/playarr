@@ -167,7 +167,7 @@ class TMDBManager {
         throw fetchError;
       }
     } catch (error) {
-      console.error('Error verifying TMDB API key:', error);
+      logger.error('Error verifying TMDB API key:', error);
       return {
         response: {
           valid: false,

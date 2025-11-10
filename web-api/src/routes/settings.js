@@ -1,5 +1,8 @@
 import express from 'express';
 import { createRequireAuth } from '../middleware/auth.js';
+import { createLogger } from '../utils/logger.js';
+
+const logger = createLogger('SettingsRouter');
 
 // TMDB token key constant matching Python
 const TMDB_TOKEN_KEY = 'tmdb_token';
@@ -34,7 +37,7 @@ class SettingsRouter {
         const result = await this._settingsManager.getSetting(TMDB_TOKEN_KEY);
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Get TMDB token error:', error);
+        logger.error('Get TMDB token error:', error);
         return res.status(500).json({ error: 'Failed to get TMDB token' });
       }
     });
@@ -54,7 +57,7 @@ class SettingsRouter {
         const result = await this._settingsManager.setSetting(TMDB_TOKEN_KEY, value);
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Set TMDB token error:', error);
+        logger.error('Set TMDB token error:', error);
         return res.status(500).json({ error: 'Failed to set TMDB token' });
       }
     });
@@ -68,7 +71,7 @@ class SettingsRouter {
         const result = await this._settingsManager.deleteSetting(TMDB_TOKEN_KEY);
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Delete TMDB token error:', error);
+        logger.error('Delete TMDB token error:', error);
         return res.status(500).json({ error: 'Failed to delete TMDB token' });
       }
     });

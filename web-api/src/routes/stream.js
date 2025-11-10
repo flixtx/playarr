@@ -1,5 +1,8 @@
 import express from 'express';
 import { createRequireApiKey } from '../middleware/apiKey.js';
+import { createLogger } from '../utils/logger.js';
+
+const logger = createLogger('StreamRouter');
 
 /**
  * Stream router for handling stream endpoints
@@ -37,7 +40,7 @@ class StreamRouter {
 
         return res.redirect(stream);
       } catch (error) {
-        console.error('Get movie stream error:', error);
+        logger.error('Get movie stream error:', error);
         return res.status(500).json({ error: 'Failed to get stream' });
       }
     });
@@ -62,7 +65,7 @@ class StreamRouter {
 
         return res.redirect(stream);
       } catch (error) {
-        console.error('Get TV show stream error:', error);
+        logger.error('Get TV show stream error:', error);
         return res.status(500).json({ error: 'Failed to get stream' });
       }
     });

@@ -1,5 +1,8 @@
 import express from 'express';
 import { createRequireAuth } from '../middleware/auth.js';
+import { createLogger } from '../utils/logger.js';
+
+const logger = createLogger('StatsRouter');
 
 /**
  * Stats router for handling statistics endpoints
@@ -31,7 +34,7 @@ class StatsRouter {
         const result = await this._statsManager.getStats();
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Get stats error:', error);
+        logger.error('Get stats error:', error);
         return res.status(500).json({ error: 'Failed to get statistics' });
       }
     });

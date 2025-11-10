@@ -1,6 +1,9 @@
 import express from 'express';
 import { createRequireAuth } from '../middleware/auth.js';
 import { createRequireAdmin } from '../middleware/admin.js';
+import { createLogger } from '../utils/logger.js';
+
+const logger = createLogger('CategoriesRouter');
 
 /**
  * Categories router for handling category endpoints
@@ -34,7 +37,7 @@ class CategoriesRouter {
         const result = await this._categoriesManager.getCategories(provider_id);
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Get provider categories error:', error);
+        logger.error('Get provider categories error:', error);
         return res.status(500).json({ error: 'Failed to get categories' });
       }
     });
@@ -55,7 +58,7 @@ class CategoriesRouter {
         const result = await this._categoriesManager.updateCategory(provider_id, category_key, categoryData);
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Update provider category error:', error);
+        logger.error('Update provider category error:', error);
         return res.status(500).json({ error: 'Failed to update category' });
       }
     });

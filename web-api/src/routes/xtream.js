@@ -1,5 +1,8 @@
 import express from 'express';
 import { DatabaseCollections, toCollectionName } from '../config/collections.js';
+import { createLogger } from '../utils/logger.js';
+
+const logger = createLogger('XtreamRouter');
 
 /**
  * Get the base URL from the request, respecting X-Forwarded-* headers
@@ -152,7 +155,7 @@ class XtreamRouter {
           }
         });
       } catch (error) {
-        console.error('Xtream API error:', error);
+        logger.error('Xtream API error:', error);
         return res.status(500).json({ error: 'Internal server error' });
       }
     });
@@ -188,7 +191,7 @@ class XtreamRouter {
         // Redirect to the actual stream URL
         return res.redirect(streamUrl);
       } catch (error) {
-        console.error('Movie stream error:', error);
+        logger.error('Movie stream error:', error);
         return res.status(500).json({ error: 'Failed to get stream' });
       }
     });
@@ -231,7 +234,7 @@ class XtreamRouter {
         // Redirect to the actual stream URL
         return res.redirect(streamUrl);
       } catch (error) {
-        console.error('Series stream error:', error);
+        logger.error('Series stream error:', error);
         return res.status(500).json({ error: 'Failed to get stream' });
       }
     });
@@ -451,7 +454,7 @@ class XtreamRouter {
       const { password_hash, _id, ...userPublic } = user;
       return userPublic;
     } catch (error) {
-      console.error('Authentication error:', error);
+      logger.error('Authentication error:', error);
       return null;
     }
   }

@@ -102,9 +102,6 @@ class StreamManager {
    */
   async _getSources(titleId, mediaType, seasonNumber = null, episodeNumber = null) {
     try {
-      // Build stream key prefix: {mediaType}-{titleId}-{streamId}-
-      const titlePrefix = `${mediaType}-${titleId}-`;
-      
       // Build stream ID suffix
       let streamIdSuffix = 'main';
       if (mediaType === 'tvshows') {

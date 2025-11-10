@@ -58,7 +58,7 @@ class JobsRouter {
         const result = await this._jobsManager.triggerJob(jobName);
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Trigger job error:', error);
+        logger.error('Trigger job error:', error);
         return res.status(500).json({ error: 'Failed to trigger job' });
       }
     });

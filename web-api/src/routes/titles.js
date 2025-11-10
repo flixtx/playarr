@@ -1,5 +1,8 @@
 import express from 'express';
 import { createRequireAuth } from '../middleware/auth.js';
+import { createLogger } from '../utils/logger.js';
+
+const logger = createLogger('TitlesRouter');
 
 /**
  * Titles router for handling titles endpoints
@@ -51,7 +54,7 @@ class TitlesRouter {
 
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Get titles error:', error);
+        logger.error('Get titles error:', error);
         return res.status(500).json({ error: 'Failed to get titles' });
       }
     });
@@ -66,7 +69,7 @@ class TitlesRouter {
         const result = await this._titlesManager.getTitleDetails(title_key, req.user);
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Get title details error:', error);
+        logger.error('Get title details error:', error);
         return res.status(500).json({ error: 'Failed to get title details' });
       }
     });
@@ -87,7 +90,7 @@ class TitlesRouter {
         const result = await this._titlesManager.updateWatchlist(req.user, title_key, watchlist);
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Update watchlist error:', error);
+        logger.error('Update watchlist error:', error);
         return res.status(500).json({ error: 'Failed to update watchlist' });
       }
     });
@@ -116,7 +119,7 @@ class TitlesRouter {
         const result = await this._titlesManager.updateWatchlistBulk(req.user, titles);
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Bulk update watchlist error:', error);
+        logger.error('Bulk update watchlist error:', error);
         return res.status(500).json({ error: 'Failed to update watchlist' });
       }
     });

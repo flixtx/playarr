@@ -1,6 +1,9 @@
 import express from 'express';
 import { getTokenExpireDays } from '../utils/jwt.js';
 import { createRequireAuth } from '../middleware/auth.js';
+import { createLogger } from '../utils/logger.js';
+
+const logger = createLogger('AuthRouter');
 
 /**
  * Auth router for handling authentication endpoints
@@ -52,7 +55,7 @@ class AuthRouter {
 
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Login error:', error);
+        logger.error('Login error:', error);
         return res.status(500).json({ error: 'Login failed' });
       }
     });
@@ -75,7 +78,7 @@ class AuthRouter {
 
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Logout error:', error);
+        logger.error('Logout error:', error);
         return res.status(500).json({ error: 'Logout failed' });
       }
     });
@@ -92,7 +95,7 @@ class AuthRouter {
 
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Verify auth error:', error);
+        logger.error('Verify auth error:', error);
         return res.status(500).json({ error: 'Verification failed' });
       }
     });

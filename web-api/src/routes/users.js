@@ -1,6 +1,9 @@
 import express from 'express';
 import { createRequireAuth } from '../middleware/auth.js';
 import { createRequireAdmin } from '../middleware/admin.js';
+import { createLogger } from '../utils/logger.js';
+
+const logger = createLogger('UsersRouter');
 
 /**
  * Users router for handling user management endpoints
@@ -33,7 +36,7 @@ class UsersRouter {
         const result = await this._userManager.getAllUsers();
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Get all users error:', error);
+        logger.error('Get all users error:', error);
         return res.status(500).json({ error: 'Failed to get users' });
       }
     });
@@ -62,7 +65,7 @@ class UsersRouter {
 
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Create user error:', error);
+        logger.error('Create user error:', error);
         return res.status(500).json({ error: 'Failed to create user' });
       }
     });
@@ -77,7 +80,7 @@ class UsersRouter {
         const result = await this._userManager.getUser(username);
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Get user error:', error);
+        logger.error('Get user error:', error);
         return res.status(500).json({ error: 'Failed to get user' });
       }
     });
@@ -100,7 +103,7 @@ class UsersRouter {
         const result = await this._userManager.updateUser(username, updates);
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Update user error:', error);
+        logger.error('Update user error:', error);
         return res.status(500).json({ error: 'Failed to update user' });
       }
     });
@@ -115,7 +118,7 @@ class UsersRouter {
         const result = await this._userManager.deleteUser(username);
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Delete user error:', error);
+        logger.error('Delete user error:', error);
         return res.status(500).json({ error: 'Failed to delete user' });
       }
     });
@@ -136,7 +139,7 @@ class UsersRouter {
         const result = await this._userManager.resetPassword(username, password);
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Reset password error:', error);
+        logger.error('Reset password error:', error);
         return res.status(500).json({ error: 'Failed to reset password' });
       }
     });

@@ -1,5 +1,8 @@
 import express from 'express';
 import { createRequireAuth } from '../middleware/auth.js';
+import { createLogger } from '../utils/logger.js';
+
+const logger = createLogger('ProfileRouter');
 
 /**
  * Profile router for handling user profile endpoints
@@ -32,7 +35,7 @@ class ProfileRouter {
         const result = await this._userManager.getProfile(username);
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Get profile error:', error);
+        logger.error('Get profile error:', error);
         return res.status(500).json({ error: 'Failed to get profile' });
       }
     });
@@ -53,7 +56,7 @@ class ProfileRouter {
         const result = await this._userManager.updateProfile(username, updates);
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Update profile error:', error);
+        logger.error('Update profile error:', error);
         return res.status(500).json({ error: 'Failed to update profile' });
       }
     });
@@ -68,7 +71,7 @@ class ProfileRouter {
         const result = await this._userManager.regenerateApiKey(username);
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Regenerate API key error:', error);
+        logger.error('Regenerate API key error:', error);
         return res.status(500).json({ error: 'Failed to regenerate API key' });
       }
     });
@@ -89,7 +92,7 @@ class ProfileRouter {
         const result = await this._userManager.changePassword(username, current_password, new_password);
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        console.error('Change password error:', error);
+        logger.error('Change password error:', error);
         return res.status(500).json({ error: 'Failed to change password' });
       }
     });
