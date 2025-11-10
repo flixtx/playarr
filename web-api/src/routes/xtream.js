@@ -88,6 +88,12 @@ class XtreamRouter extends BaseRouter {
       get_short_epg: this._handleGetShortEpg.bind(this),
       get_simple_data_table: this._handleGetSimpleDataTable.bind(this)
     };
+
+    // Stream type handlers mapping (mount path -> handler method)
+    this._streamTypeHandlers = {
+      '/movie': this._handleMovieStream.bind(this),
+      '/series': this._handleSeriesStream.bind(this)
+    };
   }
 
   /**
@@ -174,11 +180,12 @@ class XtreamRouter extends BaseRouter {
     });
 
     /**
-     * GET /movie/:username/:password/:streamId
-     * Handle movie stream requests in Xtream Code API format
-     * Format: /movie/{username}/{password}/movies-{title_id}.mp4
+     * GET /:username/:password/:streamId
+     * Handle stream requests (direct mounting at /movie or /series)
+     * Format: /{username}/{password}/movies-{title_id}.mp4 or /{username}/{password}/{title_id}.mp4 for movies
+     * Format: /{username}/{password}/tvshows-{title_id}-{season}-{episode}.mp4 or /{username}/{password}/{title_id}-{season}-{episode}.mp4 for series
      */
-    this.router.get('/movie/:username/:password/:streamId', async (req, res) => {
+    this.router.get('/:username/:password/:streamId', async (req, res) => {
       try {
         const { username, password, streamId } = req.params;
 
@@ -188,79 +195,16 @@ class XtreamRouter extends BaseRouter {
           return this.returnErrorResponse(res, 401, 'Unauthorized');
         }
 
-        this.logger.info(`Movie stream request: username=${username}, streamId=${streamId}`);
-
-        // Parse stream ID to extract title ID
-        const titleId = this._parseMovieStreamId(streamId);
-        if (!titleId) {
-          return this.returnErrorResponse(res, 400, 'Invalid stream ID format');
+        // Get handler based on mount path (req.baseUrl)
+        const handler = this._streamTypeHandlers[req.baseUrl];
+        if (!handler) {
+          return this.returnErrorResponse(res, 404, 'Invalid stream type');
         }
 
-        this.logger.debug(`Parsed movie stream: streamId=${streamId}, titleId=${titleId}`);
-
-        // Get best source for the movie
-        const streamUrl = await this._streamManager.getBestSource(titleId, 'movies');
-
-        if (!streamUrl) {
-          this.logger.warn(`No stream available: username=${username}, titleId=${titleId}`);
-          return this.returnErrorResponse(res, 503, 'No available providers');
-        }
-
-        this.logger.info(`Movie stream found: username=${username}, titleId=${titleId}, redirecting to provider stream`);
-
-        // Redirect to the actual stream URL
-        return res.redirect(streamUrl);
+        // Call the appropriate handler
+        return await handler(req, res, user, streamId);
       } catch (error) {
-        return this.returnErrorResponse(res, 500, 'Failed to get stream', `Movie stream error: ${error.message}`);
-      }
-    });
-
-    /**
-     * GET /series/:username/:password/:streamId
-     * Handle series stream requests in Xtream Code API format
-     * Format: /series/{username}/{password}/tvshows-{title_id}-{season}-{episode}.mp4
-     */
-    this.router.get('/series/:username/:password/:streamId', async (req, res) => {
-      try {
-        const { username, password, streamId } = req.params;
-
-        // Authenticate user
-        const user = await this._authenticateUser(username, password);
-        if (!user) {
-          return this.returnErrorResponse(res, 401, 'Unauthorized');
-        }
-
-        this.logger.info(`Series stream request: username=${username}, streamId=${streamId}`);
-
-        // Parse stream ID to extract title ID, season, and episode
-        const parsed = this._parseSeriesStreamId(streamId);
-        if (!parsed) {
-          return this.returnErrorResponse(res, 400, 'Invalid stream ID format');
-        }
-
-        const { title_id, season, episode } = parsed;
-
-        this.logger.debug(`Parsed series stream: streamId=${streamId}, titleId=${title_id}, season=${season}, episode=${episode}`);
-
-        // Get best source for the TV show episode
-        const streamUrl = await this._streamManager.getBestSource(
-          title_id,
-          'tvshows',
-          season,
-          episode
-        );
-
-        if (!streamUrl) {
-          this.logger.warn(`No stream available: username=${username}, titleId=${title_id}, season=${season}, episode=${episode}`);
-          return this.returnErrorResponse(res, 503, 'No available providers');
-        }
-
-        this.logger.info(`Series stream found: username=${username}, titleId=${title_id}, season=${season}, episode=${episode}, redirecting to provider stream`);
-
-        // Redirect to the actual stream URL
-        return res.redirect(streamUrl);
-      } catch (error) {
-        return this.returnErrorResponse(res, 500, 'Failed to get stream', `Series stream error: ${error.message}`);
+        return this.returnErrorResponse(res, 500, 'Failed to get stream', `Stream error: ${error.message}`);
       }
     });
   }
@@ -379,6 +323,75 @@ class XtreamRouter extends BaseRouter {
   async _handleGetSimpleDataTable(req, user, baseUrl) {
     // Not implemented, return empty object
     return {};
+  }
+
+  /**
+   * Handle movie stream request
+   * @private
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Object} user - Authenticated user
+   * @param {string} streamId - Stream ID
+   * @returns {Promise<void>}
+   */
+  async _handleMovieStream(req, res, user, streamId) {
+    const { username } = req.params;
+
+    // Parse stream ID to extract title ID
+    const titleId = this._parseMovieStreamId(streamId);
+    if (!titleId) {
+      return this.returnErrorResponse(res, 400, 'Invalid stream ID format');
+    }
+
+    this.logger.info(`Movie stream request: username=${username}, streamId=${streamId}`);
+    this.logger.debug(`Parsed movie stream: streamId=${streamId}, titleId=${titleId}`);
+
+    const streamUrl = await this._streamManager.getBestSource(titleId, 'movies');
+    if (!streamUrl) {
+      this.logger.warn(`No stream available: username=${username}, titleId=${titleId}`);
+      return this.returnErrorResponse(res, 503, 'No available providers');
+    }
+
+    this.logger.info(`Movie stream found: username=${username}, titleId=${titleId}, redirecting to provider stream`);
+    return res.redirect(streamUrl);
+  }
+
+  /**
+   * Handle series stream request
+   * @private
+   * @param {Object} req - Express request object
+   * @param {Object} res - Express response object
+   * @param {Object} user - Authenticated user
+   * @param {string} streamId - Stream ID
+   * @returns {Promise<void>}
+   */
+  async _handleSeriesStream(req, res, user, streamId) {
+    const { username } = req.params;
+
+    // Parse stream ID to extract title ID, season, and episode
+    const parsed = this._parseSeriesStreamId(streamId);
+    if (!parsed) {
+      return this.returnErrorResponse(res, 400, 'Invalid stream ID format');
+    }
+
+    const { title_id, season, episode } = parsed;
+    this.logger.info(`Series stream request: username=${username}, streamId=${streamId}`);
+    this.logger.debug(`Parsed series stream: streamId=${streamId}, titleId=${title_id}, season=${season}, episode=${episode}`);
+
+    const streamUrl = await this._streamManager.getBestSource(
+      title_id,
+      'tvshows',
+      season,
+      episode
+    );
+
+    if (!streamUrl) {
+      this.logger.warn(`No stream available: username=${username}, titleId=${title_id}, season=${season}, episode=${episode}`);
+      return this.returnErrorResponse(res, 503, 'No available providers');
+    }
+
+    this.logger.info(`Series stream found: username=${username}, titleId=${title_id}, season=${season}, episode=${episode}, redirecting to provider stream`);
+    return res.redirect(streamUrl);
   }
 
   /**
