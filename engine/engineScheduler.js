@@ -46,20 +46,7 @@ export class EngineScheduler {
     const scheduledJobs = jobsConfig.jobs.filter(job => job.interval);
     this._jobsManager = new JobsManager(this._mongoData, jobsConfig, null);
 
-    // Run scheduled jobs on startup
-    for (const job of scheduledJobs) {
-      const timeout = this._parseTime(job.timeout || '0');
-      if (timeout > 0) {
-        await new Promise(resolve => setTimeout(resolve, timeout));
-      }
-      try {
-        await this.runJob(job.name);
-      } catch (error) {
-        this.logger.error(`Error running job '${job.name}' on startup: ${error.message}`);
-      }
-    }
-
-    // Set up hourly interval
+    // Set up hourly interval first (so scheduler is ready)
     if (scheduledJobs.length > 0) {
       const intervalMs = this._parseTime(scheduledJobs[0].interval);
       this._intervalId = setInterval(async () => {
@@ -75,6 +62,23 @@ export class EngineScheduler {
     }
 
     this.logger.info('EngineScheduler initialized');
+
+    // Run scheduled jobs on startup asynchronously (don't block initialization)
+    // This allows the API server to start immediately
+    for (const job of scheduledJobs) {
+      const timeout = this._parseTime(job.timeout || '0');
+      // Run each job asynchronously without blocking
+      (async () => {
+        if (timeout > 0) {
+          await new Promise(resolve => setTimeout(resolve, timeout));
+        }
+        try {
+          await this.runJob(job.name);
+        } catch (error) {
+          this.logger.error(`Error running job '${job.name}' on startup: ${error.message}`);
+        }
+      })();
+    }
   }
 
   /**
