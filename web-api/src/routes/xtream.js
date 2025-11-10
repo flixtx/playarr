@@ -1,8 +1,5 @@
-import express from 'express';
+import BaseRouter from './BaseRouter.js';
 import { DatabaseCollections, toCollectionName } from '../config/collections.js';
-import { createLogger } from '../utils/logger.js';
-
-const logger = createLogger('XtreamRouter');
 
 /**
  * Get the base URL from the request, respecting X-Forwarded-* headers
@@ -45,17 +42,16 @@ function getBaseUrl(req) {
  * Exposes movies and TV shows in Xtream Code API format
  * Authentication: username and API key (password parameter)
  */
-class XtreamRouter {
+class XtreamRouter extends BaseRouter {
   /**
    * @param {import('../managers/xtream.js').XtreamManager} xtreamManager - Xtream manager instance
    * @param {import('../services/database.js').DatabaseService} database - Database service instance
    * @param {import('../managers/stream.js').StreamManager} streamManager - Stream manager instance
    */
   constructor(xtreamManager, database, streamManager) {
+    super(database, 'XtreamRouter');
     this._xtreamManager = xtreamManager;
-    this._database = database;
     this._streamManager = streamManager;
-    this.router = express.Router();
     
     // Action handlers configuration map
     this._actionHandlers = {
@@ -68,15 +64,12 @@ class XtreamRouter {
       get_short_epg: this._handleGetShortEpg.bind(this),
       get_simple_data_table: this._handleGetSimpleDataTable.bind(this)
     };
-    
-    this._setupRoutes();
   }
 
   /**
-   * Setup all routes for this router
-   * @private
+   * Initialize routes for this router
    */
-  _setupRoutes() {
+  initialize() {
     /**
      * GET /
      * Xtream Code API endpoint (mounted at /player_api.php)
@@ -132,10 +125,10 @@ class XtreamRouter {
           } catch (error) {
             // Handle specific errors from handlers
             if (error.message === 'vod_id parameter required' || error.message === 'series_id parameter required') {
-              return res.status(400).json({ error: error.message });
+              return this.returnErrorResponse(res, 400, error.message);
             }
             if (error.message === 'Movie not found' || error.message === 'Series not found') {
-              return res.status(404).json({ error: error.message });
+              return this.returnErrorResponse(res, 404, error.message);
             }
             throw error; // Re-throw to be caught by outer catch
           }
@@ -155,8 +148,7 @@ class XtreamRouter {
           }
         });
       } catch (error) {
-        logger.error('Xtream API error:', error);
-        return res.status(500).json({ error: 'Internal server error' });
+        return this.returnErrorResponse(res, 500, 'Internal server error', `Xtream API error: ${error.message}`);
       }
     });
 
@@ -172,27 +164,26 @@ class XtreamRouter {
         // Authenticate user
         const user = await this._authenticateUser(username, password);
         if (!user) {
-          return res.status(401).json({ error: 'Unauthorized' });
+          return this.returnErrorResponse(res, 401, 'Unauthorized');
         }
 
         // Parse stream ID to extract title ID
         const titleId = this._parseMovieStreamId(streamId);
         if (!titleId) {
-          return res.status(400).json({ error: 'Invalid stream ID format' });
+          return this.returnErrorResponse(res, 400, 'Invalid stream ID format');
         }
 
         // Get best source for the movie
         const streamUrl = await this._streamManager.getBestSource(titleId, 'movies');
 
         if (!streamUrl) {
-          return res.status(503).json({ error: 'No available providers' });
+          return this.returnErrorResponse(res, 503, 'No available providers');
         }
 
         // Redirect to the actual stream URL
         return res.redirect(streamUrl);
       } catch (error) {
-        logger.error('Movie stream error:', error);
-        return res.status(500).json({ error: 'Failed to get stream' });
+        return this.returnErrorResponse(res, 500, 'Failed to get stream', `Movie stream error: ${error.message}`);
       }
     });
 
@@ -208,13 +199,13 @@ class XtreamRouter {
         // Authenticate user
         const user = await this._authenticateUser(username, password);
         if (!user) {
-          return res.status(401).json({ error: 'Unauthorized' });
+          return this.returnErrorResponse(res, 401, 'Unauthorized');
         }
 
         // Parse stream ID to extract title ID, season, and episode
         const parsed = this._parseSeriesStreamId(streamId);
         if (!parsed) {
-          return res.status(400).json({ error: 'Invalid stream ID format' });
+          return this.returnErrorResponse(res, 400, 'Invalid stream ID format');
         }
 
         const { title_id, season, episode } = parsed;
@@ -228,14 +219,13 @@ class XtreamRouter {
         );
 
         if (!streamUrl) {
-          return res.status(503).json({ error: 'No available providers' });
+          return this.returnErrorResponse(res, 503, 'No available providers');
         }
 
         // Redirect to the actual stream URL
         return res.redirect(streamUrl);
       } catch (error) {
-        logger.error('Series stream error:', error);
-        return res.status(500).json({ error: 'Failed to get stream' });
+        return this.returnErrorResponse(res, 500, 'Failed to get stream', `Series stream error: ${error.message}`);
       }
     });
   }

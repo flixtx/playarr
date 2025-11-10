@@ -141,6 +141,22 @@ async function initialize() {
     const xtreamRouter = new XtreamRouter(xtreamManager, database, streamManager);
     const jobsRouter = new JobsRouter(jobsManager, database);
 
+    // Initialize all routers
+    authRouter.initialize();
+    usersRouter.initialize();
+    profileRouter.initialize();
+    settingsRouter.initialize();
+    statsRouter.initialize();
+    titlesRouter.initialize();
+    categoriesRouter.initialize();
+    providersRouter.initialize();
+    streamRouter.initialize();
+    playlistRouter.initialize();
+    tmdbRouter.initialize();
+    healthcheckRouter.initialize();
+    xtreamRouter.initialize();
+    jobsRouter.initialize();
+
     // Step 4: Register routes
     app.use('/api/auth', authRouter.router);
     app.use('/api/users', usersRouter.router);

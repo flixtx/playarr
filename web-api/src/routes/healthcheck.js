@@ -1,9 +1,6 @@
-import express from 'express';
+import BaseRouter from './BaseRouter.js';
 import os from 'os';
 import checkDiskSpace from 'check-disk-space';
-import { createLogger } from '../utils/logger.js';
-
-const logger = createLogger('HealthcheckRouter');
 
 // Track server start time for uptime calculation
 const START_TIME = Date.now() / 1000; // Unix timestamp in seconds
@@ -11,23 +8,20 @@ const START_TIME = Date.now() / 1000; // Unix timestamp in seconds
 /**
  * Healthcheck router for handling health check endpoints
  */
-class HealthcheckRouter {
+class HealthcheckRouter extends BaseRouter {
   /**
    * @param {MongoDatabaseService} database - Database service instance
    * @param {SettingsManager} settingsManager - Settings manager instance
    */
   constructor(database, settingsManager) {
-    this._database = database;
+    super(database, 'HealthcheckRouter');
     this._settingsManager = settingsManager;
-    this.router = express.Router();
-    this._setupRoutes();
   }
 
   /**
-   * Setup all routes for this router
-   * @private
+   * Initialize routes for this router
    */
-  _setupRoutes() {
+  initialize() {
     /**
      * GET /api/healthcheck
      * System health check endpoint matching Python's healthcheck format
@@ -79,7 +73,7 @@ class HealthcheckRouter {
           diskUsed = diskTotal - diskFree;
           diskPercent = (diskUsed / diskTotal) * 100;
         } catch (error) {
-          logger.warn('Failed to get disk usage:', error);
+          this.logger.warn('Failed to get disk usage:', error);
           // Fallback to memory values if disk check fails
           diskTotal = totalMemory;
           diskFree = freeMemory;
@@ -132,8 +126,7 @@ class HealthcheckRouter {
         const statusCode = dbStatus && tmdbStatus ? 200 : 503;
         return res.status(statusCode).json(response);
       } catch (error) {
-        logger.error('Health check failed:', error);
-        return res.status(500).json({ error: `Health check failed: ${error.message}` });
+        return this.returnErrorResponse(res, 500, `Health check failed: ${error.message}`, `Health check error: ${error.message}`);
       }
     });
   }
