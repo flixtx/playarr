@@ -1150,13 +1150,15 @@ export class TMDBProvider extends BaseProvider {
 
     // Strategy 2: Search by title name
     // Used for AGTV when IMDB lookup fails, and for Xtream when tmdb_id is not available
-    if (title.title) {
+    // Check both title.title and title.name (Xtream providers use 'name', AGTV uses 'title')
+    const titleName = title.title || title.name;
+    if (titleName) {
       try {
         // Prefer release_date year if available (for Xtream providers), otherwise extract from title
         const year = title.release_date 
           ? extractYearFromReleaseDate(title.release_date) 
-          : extractYearFromTitle(title.title);
-        const baseTitle = extractBaseTitle(title.title);
+          : extractYearFromTitle(titleName);
+        const baseTitle = extractBaseTitle(titleName);
         
         // Try searching with base title and year first
         let searchResult = await this.search(tmdbType, baseTitle, year);
@@ -1171,7 +1173,7 @@ export class TMDBProvider extends BaseProvider {
           return searchResult.results[0].id;
         }
       } catch (error) {
-        this.logger.debug(`Search failed for "${title.title}": ${error.message}`);
+        this.logger.debug(`Search failed for "${titleName}": ${error.message}`);
       }
     }
 
