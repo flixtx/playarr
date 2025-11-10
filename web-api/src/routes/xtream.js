@@ -384,17 +384,26 @@ class XtreamRouter extends BaseRouter {
   /**
    * Parse movie stream ID to extract title ID
    * @private
-   * @param {string} streamId - Stream ID in format: movies-{title_id}.mp4
+   * @param {string} streamId - Stream ID in format: movies-{title_id}.mp4 or {title_id}.mp4
    * @returns {string|null} Title ID or null if invalid format
    */
   _parseMovieStreamId(streamId) {
-    // Format: movies-{title_id}.mp4
-    if (!streamId || !streamId.startsWith('movies-') || !streamId.endsWith('.mp4')) {
+    // Format 1: movies-{title_id}.mp4 (current format)
+    // Format 2: {title_id}.mp4 (Xtream Code API standard format)
+    
+    if (!streamId || !streamId.endsWith('.mp4')) {
       return null;
     }
     
-    // Remove 'movies-' prefix and '.mp4' suffix
-    const titleId = streamId.slice(7, -4); // Remove 'movies-' (7 chars) and '.mp4' (4 chars)
+    let titleId;
+    
+    // Check if it's in format: movies-{title_id}.mp4
+    if (streamId.startsWith('movies-')) {
+      titleId = streamId.slice(7, -4); // Remove 'movies-' (7 chars) and '.mp4' (4 chars)
+    } else {
+      // Format: {title_id}.mp4 (standard Xtream Code API format)
+      titleId = streamId.slice(0, -4); // Remove '.mp4' (4 chars)
+    }
     
     if (!titleId || titleId.length === 0) {
       return null;
@@ -406,18 +415,24 @@ class XtreamRouter extends BaseRouter {
   /**
    * Parse series stream ID to extract title ID, season, and episode
    * @private
-   * @param {string} streamId - Stream ID in format: tvshows-{title_id}-{season}-{episode}.mp4
+   * @param {string} streamId - Stream ID in format: tvshows-{title_id}-{season}-{episode}.mp4 or {title_id}-{season}-{episode}.mp4
    * @returns {Object|null} Object with title_id, season, episode or null if invalid format
    */
   _parseSeriesStreamId(streamId) {
-    // Format: tvshows-{title_id}-{season}-{episode}.mp4
-    if (!streamId || !streamId.startsWith('tvshows-') || !streamId.endsWith('.mp4')) {
+    // Format 1: tvshows-{title_id}-{season}-{episode}.mp4 (current format)
+    // Format 2: {title_id}-{season}-{episode}.mp4 (Xtream Code API standard format)
+    
+    if (!streamId || !streamId.endsWith('.mp4')) {
       return null;
     }
     
-    // Remove 'tvshows-' prefix and '.mp4' suffix
-    const withoutPrefix = streamId.slice(8); // Remove 'tvshows-' (8 chars)
-    const withoutSuffix = withoutPrefix.slice(0, -4); // Remove '.mp4' (4 chars)
+    // Remove '.mp4' suffix
+    let withoutSuffix = streamId.slice(0, -4);
+    
+    // Remove 'tvshows-' prefix if present
+    if (withoutSuffix.startsWith('tvshows-')) {
+      withoutSuffix = withoutSuffix.slice(8); // Remove 'tvshows-' (8 chars)
+    }
     
     // Split by '-' to get components
     // Expected: {title_id}-{season}-{episode}

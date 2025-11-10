@@ -183,6 +183,11 @@ async function initialize() {
     app.use('/api/tmdb', tmdbRouter.router);
     app.use('/api/healthcheck', healthcheckRouter.router);
     app.use('/player_api.php', xtreamRouter.router); // Xtream Code API at specific path
+    
+    // Add direct stream routes (Xtream Code API standard format)
+    // These must come before the React Router fallback
+    app.use('/movie', xtreamRouter.router);
+    app.use('/series', xtreamRouter.router);
 
     // Static file serving for React app
     // Serve static files from React build directory
@@ -191,8 +196,11 @@ async function initialize() {
 
     // React Router fallback - serve index.html for non-API routes
     app.get('*', (req, res) => {
-      // Don't serve index.html for API routes
-      if (req.path.startsWith('/api')) {
+      // Don't serve index.html for API routes or stream routes
+      if (req.path.startsWith('/api') || 
+          req.path.startsWith('/movie') || 
+          req.path.startsWith('/series') ||
+          req.path.startsWith('/player_api.php')) {
         return res.status(404).json({ error: 'Not found' });
       }
       
