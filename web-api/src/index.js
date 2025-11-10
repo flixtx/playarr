@@ -5,9 +5,23 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import http from 'http';
 import dotenv from 'dotenv';
+import fsExtra from 'fs-extra';
 
 // Load environment variables
 dotenv.config();
+
+// Rotate log file on startup using the log file's creation date (before logger is created)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const logsDir = process.env.LOGS_DIR || path.join(__dirname, '../../../logs');
+const apiLogPath = path.join(logsDir, 'api.log');
+if (fsExtra.existsSync(apiLogPath)) {
+  const stats = fsExtra.statSync(apiLogPath);
+  const creationDate = stats.birthtime || stats.mtime; // Use birthtime if available, fallback to mtime
+  const timestamp = creationDate.toISOString().replace(/[:.]/g, '-').slice(0, -5);
+  const rotatedLogPath = path.join(logsDir, `api-${timestamp}.log`);
+  fsExtra.moveSync(apiLogPath, rotatedLogPath);
+}
 
 // Import logger
 import { createLogger } from './utils/logger.js';
@@ -45,9 +59,6 @@ import TMDBRouter from './routes/tmdb.js';
 import HealthcheckRouter from './routes/healthcheck.js';
 import XtreamRouter from './routes/xtream.js';
 import JobsRouter from './routes/jobs.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;

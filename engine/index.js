@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 import Bree from 'bree';
 import path from 'path';
 import fs from 'fs';
+import fsExtra from 'fs-extra';
 import { fileURLToPath } from 'url';
 import { createLogger } from './utils/logger.js';
 import { EngineServer } from './server.js';
@@ -15,6 +16,18 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const CACHE_DIR = process.env.CACHE_DIR || path.join(__dirname, '../cache');
+
+// Rotate log file on startup using the log file's creation date
+const logsDir = process.env.LOGS_DIR || path.join(__dirname, '../logs');
+const engineLogPath = path.join(logsDir, 'engine.log');
+if (fsExtra.existsSync(engineLogPath)) {
+  const stats = fsExtra.statSync(engineLogPath);
+  const creationDate = stats.birthtime || stats.mtime; // Use birthtime if available, fallback to mtime
+  const timestamp = creationDate.toISOString().replace(/[:.]/g, '-').slice(0, -5);
+  const rotatedLogPath = path.join(logsDir, `engine-${timestamp}.log`);
+  fsExtra.moveSync(engineLogPath, rotatedLogPath);
+}
+
 const logger = createLogger('Main');
 
 // Load jobs configuration
@@ -116,7 +129,19 @@ async function main() {
           workerData = { ...jobConfig.worker.workerData, ...workerData };
         }
       }
-      return await originalRun(name, workerData);
+      
+      // Log job start with workerData
+      const workerDataStr = workerData ? JSON.stringify(workerData) : 'none';
+      logger.info(`Starting job '${name}' with workerData: ${workerDataStr}`);
+      const startTime = Date.now();
+      
+      const result = await originalRun(name, workerData);
+      
+      // Log job completion with duration
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+      logger.info(`Job '${name}' completed successfully after ${duration} seconds`);
+      
+      return result;
     } catch (error) {
       // If Bree throws "already running" error, ignore it (MongoDB is source of truth)
       if (error.message && error.message.includes('already running')) {
