@@ -5,7 +5,7 @@ import { fileURLToPath } from "url";
 import { createLogger } from "./utils/logger.js";
 import { EngineServer } from "./engineServer.js";
 import { ApplicationContext } from "./context/ApplicationContext.js";
-import { EngineScheduler } from "./EngineScheduler.js";
+import { EngineScheduler } from "./engineScheduler.js";
 
 dotenv.config();
 
