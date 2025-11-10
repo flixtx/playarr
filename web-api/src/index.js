@@ -19,7 +19,15 @@ if (fsExtra.existsSync(apiLogPath)) {
   const stats = fsExtra.statSync(apiLogPath);
   const creationDate = stats.birthtime || stats.mtime; // Use birthtime if available, fallback to mtime
   const timestamp = creationDate.toISOString().replace(/[:.]/g, '-').slice(0, -5);
-  const rotatedLogPath = path.join(logsDir, `api-${timestamp}.log`);
+  let rotatedLogPath = path.join(logsDir, `api-${timestamp}.log`);
+  
+  // If destination already exists, append a counter to make it unique
+  let counter = 1;
+  while (fsExtra.existsSync(rotatedLogPath)) {
+    rotatedLogPath = path.join(logsDir, `api-${timestamp}-${counter}.log`);
+    counter++;
+  }
+  
   fsExtra.moveSync(apiLogPath, rotatedLogPath);
 }
 

@@ -11,9 +11,9 @@ export class XtreamProvider extends BaseIPTVProvider {
    * @param {import('../managers/StorageManager.js').StorageManager} cache - Storage manager instance for temporary cache
    * @param {import('../managers/StorageManager.js').StorageManager} data - Storage manager instance for persistent data storage
    * @param {import('../services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service instance
-   * @param {import('../providers/TMDBProvider.js').TMDBProvider} [tmdbProvider=null] - TMDB provider instance for matching TMDB IDs
+   * @param {import('../providers/TMDBProvider.js').TMDBProvider} tmdbProvider - TMDB provider instance for matching TMDB IDs (required)
    */
-  constructor(providerData, cache, data, mongoData, tmdbProvider = null) {
+  constructor(providerData, cache, data, mongoData, tmdbProvider) {
     super(providerData, cache, data, mongoData, undefined, tmdbProvider);
         
     /**
@@ -447,8 +447,8 @@ export class XtreamProvider extends BaseIPTVProvider {
     // Load existing titles and categories for filtering decisions
     const existingTitles = this.loadTitles(type);
     
-    // Load ignored titles to skip them
-    const ignoredTitles = this.loadIgnoredTitles(type);
+    // Create Map for O(1) lookup of existing titles (for ignored check)
+    const existingTitlesMap = new Map(existingTitles.map(t => [t.title_id, t]));
     
     // Create appropriate data structure for checking existing titles
     const existingTitleMap = config.shouldCheckUpdates
@@ -466,13 +466,20 @@ export class XtreamProvider extends BaseIPTVProvider {
     const filteredTitles = titles.filter(title => {
       const titleId = title[config.idField];
       
-      // Skip if already ignored
-      if (titleId && ignoredTitles.hasOwnProperty(titleId)) {
-        this.logger.debug(`${type}: Skipping ignored title ${titleId}: ${ignoredTitles[titleId]}`);
+      if (!titleId) {
         return false;
       }
       
-      return titleId && !config.shouldSkip(title, existingTitleMap, categoryMap);
+      // Get existing title if it exists (O(1) lookup)
+      const existingTitle = existingTitlesMap.get(titleId);
+      
+      // Skip if exists and is ignored
+      if (existingTitle && existingTitle.ignored === true) {
+        this.logger.debug(`${type}: Skipping ignored title ${titleId}: ${existingTitle.ignored_reason || 'Unknown reason'}`);
+        return false;
+      }
+      
+      return !config.shouldSkip(title, existingTitleMap, categoryMap);
     });
     
     this.logger.info(`${type}: Filtered to ${filteredTitles.length} titles to process`);
@@ -531,10 +538,12 @@ export class XtreamProvider extends BaseIPTVProvider {
         const errorMessage = error.message || 'Unknown error';
         this.logger.warn(`Failed to fetch extended info for ${type} ${titleId}: ${errorMessage}`);
         
-        // Add to ignored list since extended info fetch failure indicates content issue
-        this.addIgnoredTitle(type, titleId, `Extended info fetch failed: ${errorMessage}`);
-        
-        return false;
+        // Mark as ignored but still save to database
+        const reason = `Extended info fetch failed: ${errorMessage}`;
+        titleData.ignored = true;
+        titleData.ignored_reason = reason;
+        this.addIgnoredTitle(type, titleId, reason);
+        // Continue processing so title gets saved with ignored flag
       }
     }
 
@@ -542,12 +551,10 @@ export class XtreamProvider extends BaseIPTVProvider {
     titleData.type = type;
 
     // Match TMDB ID if needed (common logic from BaseIPTVProvider)
-    const shouldProcess = await this._matchAndUpdateTMDBId(titleData, type, titleId);
-    if (!shouldProcess) {
-      return false;
-    }
+    // This will set ignored flags on titleData if matching fails, but still return true
+    await this._matchAndUpdateTMDBId(titleData, type, titleId);
 
-    // Build processed title data
+    // Always build and save the processed title, even if it has ignored: true
     const processedTitle = this._buildProcessedTitleData(titleData, type);
     
     // Push to processedTitles array
@@ -575,7 +582,9 @@ export class XtreamProvider extends BaseIPTVProvider {
       tmdb_id: title.tmdb_id || null,
       category_id: title.category_id || null,
       release_date: title.release_date || null,
-      streams: title.streams || {}
+      streams: title.streams || {},
+      ignored: title.ignored || false,
+      ignored_reason: title.ignored_reason || null
     };
   }
 

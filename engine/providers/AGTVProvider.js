@@ -12,9 +12,9 @@ export class AGTVProvider extends BaseIPTVProvider {
    * @param {import('../managers/StorageManager.js').StorageManager} cache - Storage manager instance for temporary cache
    * @param {import('../managers/StorageManager.js').StorageManager} data - Storage manager instance for persistent data storage
    * @param {import('../services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service instance
-   * @param {import('../providers/TMDBProvider.js').TMDBProvider} [tmdbProvider=null] - TMDB provider instance for matching TMDB IDs
+   * @param {import('../providers/TMDBProvider.js').TMDBProvider} tmdbProvider - TMDB provider instance for matching TMDB IDs (required)
    */
-  constructor(providerData, cache, data, mongoData, tmdbProvider = null) {
+  constructor(providerData, cache, data, mongoData, tmdbProvider) {
     // AGTV uses 10k batch size since everything is in-memory and extremely fast
     super(providerData, cache, data, mongoData, 10000, tmdbProvider);
         
@@ -441,6 +441,9 @@ export class AGTVProvider extends BaseIPTVProvider {
 
     // Load existing titles to check for duplicates
     const existingTitles = this.loadTitles(type);
+    
+    // Create Map for O(1) lookup of existing titles (for ignored check)
+    const existingTitlesMap = new Map(existingTitles.map(t => [t.title_id, t]));
     const existingTitleIds = new Set(existingTitles.map(t => t.title_id).filter(Boolean));
 
     // Create empty category map (AGTV doesn't support categories)
@@ -449,7 +452,21 @@ export class AGTVProvider extends BaseIPTVProvider {
     // Filter titles using shouldSkip function
     const filteredTitles = titles.filter(title => {
       const titleId = title[config.idField];
-      return titleId && !config.shouldSkip(title, existingTitleIds, categoryMap);
+      
+      if (!titleId) {
+        return false;
+      }
+      
+      // Get existing title if it exists (O(1) lookup)
+      const existingTitle = existingTitlesMap.get(titleId);
+      
+      // Skip if exists and is ignored
+      if (existingTitle && existingTitle.ignored === true) {
+        this.logger.debug(`${type}: Skipping ignored title ${titleId}: ${existingTitle.ignored_reason || 'Unknown reason'}`);
+        return false;
+      }
+      
+      return !config.shouldSkip(title, existingTitleIds, categoryMap);
     });
     
     this.logger.info(`${type}: Filtered to ${filteredTitles.length} titles to process`);
@@ -485,12 +502,10 @@ export class AGTVProvider extends BaseIPTVProvider {
       title.type = type;
 
       // Match TMDB ID if needed (common logic from BaseIPTVProvider)
-      const shouldProcess = await this._matchAndUpdateTMDBId(title, type, titleId);
-      if (!shouldProcess) {
-        return false;
-      }
+      // This will set ignored flags on title if matching fails, but still return true
+      await this._matchAndUpdateTMDBId(title, type, titleId);
 
-      // Build processed title data
+      // Always build and save the processed title, even if it has ignored: true
       const processedTitle = this._buildProcessedTitleData(title, type);
       
       // Push to processedTitles array
@@ -522,7 +537,9 @@ export class AGTVProvider extends BaseIPTVProvider {
       tmdb_id: title.tmdb_id || null,
       category_id: title.category_id || null,
       release_date: title.release_date || null,
-      streams: title.streams || {}
+      streams: title.streams || {},
+      ignored: title.ignored || false,
+      ignored_reason: title.ignored_reason || null
     };
   }
 }

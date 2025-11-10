@@ -35,9 +35,9 @@ export class BaseIPTVProvider extends BaseProvider {
    * @param {import('../managers/StorageManager.js').StorageManager} [data] - Storage manager instance for persistent data storage (legacy, unused)
    * @param {import('../services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service instance
    * @param {number} [metadataBatchSize=100] - Batch size for processing metadata (default: 100)
-   * @param {import('../providers/TMDBProvider.js').TMDBProvider} [tmdbProvider=null] - TMDB provider instance for matching TMDB IDs
+   * @param {import('../providers/TMDBProvider.js').TMDBProvider} tmdbProvider - TMDB provider instance for matching TMDB IDs (required)
    */
-  constructor(providerData, cache, data, mongoData, metadataBatchSize = 100, tmdbProvider = null) {
+  constructor(providerData, cache, data, mongoData, metadataBatchSize = 100, tmdbProvider) {
     super(providerData, cache);
     
     if (!mongoData) {
@@ -45,7 +45,10 @@ export class BaseIPTVProvider extends BaseProvider {
     }
     this.mongoData = mongoData;
     
-    // TMDB provider instance for matching TMDB IDs
+    // TMDB provider instance for matching TMDB IDs (required)
+    if (!tmdbProvider) {
+      throw new Error('TMDBProvider is required for BaseIPTVProvider');
+    }
     this.tmdbProvider = tmdbProvider;
     
     // In-memory cache for titles and ignored titles
@@ -240,7 +243,7 @@ export class BaseIPTVProvider extends BaseProvider {
     }
 
     // Match TMDB ID if needed
-    if (!titleData.tmdb_id && this.tmdbProvider) {
+    if (!titleData.tmdb_id) {
       try {
         const tmdbId = await this.tmdbProvider.matchTMDBIdForTitle(titleData, type, this.getProviderType());
         
@@ -248,17 +251,23 @@ export class BaseIPTVProvider extends BaseProvider {
           titleData.tmdb_id = tmdbId;
           titleData.lastUpdated = new Date().toISOString();
         } else {
-          // Matching failed, mark as ignored
-          this.addIgnoredTitle(type, titleId, 'TMDB matching failed');
-          return false;
+          // Matching failed, mark as ignored but still save to database
+          const reason = 'TMDB matching failed';
+          titleData.ignored = true;
+          titleData.ignored_reason = reason;
+          this.addIgnoredTitle(type, titleId, reason);
+          return true; // Return true so title gets saved with ignored flag
         }
       } catch (error) {
         this.logger.warn(`TMDB matching error for ${type} ${titleId}: ${error.message}`);
-        // Mark as ignored on error
-        this.addIgnoredTitle(type, titleId, `TMDB matching error: ${error.message}`);
-        return false;
+        // Mark as ignored on error but still save to database
+        const reason = `TMDB matching error: ${error.message}`;
+        titleData.ignored = true;
+        titleData.ignored_reason = reason;
+        this.addIgnoredTitle(type, titleId, reason);
+        return true; // Return true so title gets saved with ignored flag
       }
-    } else if (titleData.tmdb_id) {
+    } else {
       // Already has TMDB ID, just update lastUpdated
       titleData.lastUpdated = new Date().toISOString();
     }
@@ -403,14 +412,21 @@ export class BaseIPTVProvider extends BaseProvider {
    * Load provider titles from MongoDB (incremental)
    * Should be called once at the start of job execution
    * @param {Date} [since=null] - Only load titles updated since this date
+   * @param {boolean} [includeIgnored=false] - If true, include ignored titles in the results
    * @returns {Promise<TitleData[]>} Array of all title data objects
    */
-  async loadProviderTitles(since = null) {
+  async loadProviderTitles(since = null, includeIgnored = false) {
     try {
-      const titles = await this.mongoData.getProviderTitles(this.providerId, {
-        since: since,
-        ignored: false // Only non-ignored titles
-      });
+      const queryOptions = {
+        since: since
+      };
+      
+      // Only filter by ignored status if includeIgnored is false
+      if (!includeIgnored) {
+        queryOptions.ignored = false;
+      }
+      
+      const titles = await this.mongoData.getProviderTitles(this.providerId, queryOptions);
       
       this._titlesCache = titles;
       return titles;

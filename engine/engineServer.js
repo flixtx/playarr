@@ -8,11 +8,11 @@ const logger = createLogger('EngineServer');
  */
 class EngineServer {
   /**
-   * @param {import('bree').default} bree - Bree instance for job control
+   * @param {import('./EngineScheduler.js').EngineScheduler} scheduler - Job scheduler instance
    * @param {import('./managers/JobsManager.js').JobsManager} jobsManager - Jobs manager for validation
    */
-  constructor(bree, jobsManager) {
-    this._bree = bree;
+  constructor(scheduler, jobsManager) {
+    this._scheduler = scheduler;
     this._jobsManager = jobsManager;
     this._app = null;
     this._server = null;
@@ -46,7 +46,7 @@ class EngineServer {
 
     /**
      * POST /api/jobs/:jobName/trigger
-     * Triggers a job manually via bree.run()
+     * Triggers a job manually via scheduler.runJob()
      * Body parameter: { providerId: "provider-id" } to process all titles for a specific provider
      */
     this._app.post('/api/jobs/:jobName/trigger', async (req, res) => {
@@ -82,7 +82,7 @@ class EngineServer {
             ? { providerId }
             : undefined;
           
-          await this._bree.run(jobName, workerData);
+          await this._scheduler.runJob(jobName, workerData);
           logger.info(`Job '${jobName}' triggered successfully${providerId ? ` for provider ${providerId}` : ''}`);
           res.json({ 
             success: true, 
@@ -91,12 +91,12 @@ class EngineServer {
             ...(providerId ? { providerId } : {})
           });
         } catch (error) {
-          // Handle "already running" error from Bree (fallback for race conditions)
+          // Handle "already running" error (fallback for race conditions)
           // Check for both the custom error code and the error message
           if (error.code === 'JOB_ALREADY_RUNNING' || 
               error.isAlreadyRunning || 
               (error.message && error.message.includes('already running'))) {
-            logger.debug(`Job '${jobName}' is already running (detected by Bree error)`);
+            logger.debug(`Job '${jobName}' is already running`);
             return res.status(409).json({ 
               error: `Job '${jobName}' is already running`,
               status: 'running'
@@ -109,10 +109,18 @@ class EngineServer {
         if (error.code === 'JOB_ALREADY_RUNNING' || 
             error.isAlreadyRunning || 
             (error.message && error.message.includes('already running'))) {
-          logger.debug(`Job '${jobName}' is already running (detected in outer catch)`);
+          logger.debug(`Job '${jobName}' is already running`);
           return res.status(409).json({ 
             error: `Job '${jobName}' is already running`,
             status: 'running'
+          });
+        }
+        // Handle "cannot run" errors (blocked by other jobs)
+        if (error.code === 'JOB_CANNOT_RUN') {
+          return res.status(409).json({ 
+            error: error.message,
+            status: 'blocked',
+            blockingJobs: error.blockingJobs || []
           });
         }
         // Log and return 500 for unexpected errors

@@ -42,10 +42,10 @@ export class ProcessProvidersTitlesJob extends BaseJob {
       await this.mongoData.updateJobStatus(jobName, 'running');
 
       // Load provider titles incrementally (only updated since last execution)
+      // Include ignored titles for proper comparison and filtering
       for (const [providerId, providerInstance] of this.providers) {
         try {
-          await providerInstance.loadProviderTitles(lastExecution);
-          await providerInstance.loadIgnoredTitlesFromMongoDB();
+          await providerInstance.loadProviderTitles(lastExecution, true);
         } catch (error) {
           this.logger.warn(`[${providerId}] Error loading titles from MongoDB: ${error.message}`);
         }
