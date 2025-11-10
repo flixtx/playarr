@@ -3,6 +3,7 @@ import { DatabaseCollections, DataProvider } from '../config/collections.js';
 import { toCollectionName } from '../config/collections.js';
 import slugify from 'slugify';
 import dotenv from 'dotenv';
+import { JobsManager } from './jobs.js';
 
 dotenv.config();
 
@@ -15,11 +16,13 @@ class ProvidersManager extends BaseManager {
    * @param {import('../services/database.js').DatabaseService} database - Database service instance
    * @param {import('../services/websocket.js').WebSocketService} webSocketService - WebSocket service instance
    * @param {import('./titles.js').TitlesManager} titlesManager - Titles manager instance
+   * @param {import('./jobs.js').JobsManager} jobsManager - Jobs manager instance
    */
-  constructor(database, webSocketService, titlesManager) {
+  constructor(database, webSocketService, titlesManager, jobsManager) {
     super('ProvidersManager', database);
     this._webSocketService = webSocketService;
     this._titlesManager = titlesManager;
+    this._jobsManager = jobsManager;
     this._providersCollection = toCollectionName(DatabaseCollections.IPTV_PROVIDERS);
   }
 
@@ -315,6 +318,15 @@ class ProvidersManager extends BaseManager {
           // Log error but don't fail the provider update
           this.logger.error(`Error cleaning up provider ${providerId}: ${error.message}`);
         }
+
+        // Trigger processMainTitles with providerId when provider is disabled
+        try {
+          this.logger.info(`Provider ${providerId} disabled. Triggering processMainTitles for provider ${providerId}...`);
+          await this._jobsManager.triggerJob('processMainTitles', { providerId });
+        } catch (error) {
+          this.logger.error(`Failed to trigger processMainTitles: ${error.message}`);
+          // Don't fail the provider update if triggering fails
+        }
       }
 
       // Normalize URLs
@@ -400,6 +412,19 @@ class ProvidersManager extends BaseManager {
         provider_id: providerId,
         action: 'deleted'
       });
+
+      // Trigger processMainTitles and purgeProviderCache
+      // Pass providerId to processMainTitles to process all titles for that provider
+      try {
+        this.logger.info(`Provider ${providerId} deleted. Triggering processMainTitles (provider: ${providerId}) and purgeProviderCache...`);
+        await Promise.all([
+          this._jobsManager.triggerJob('processMainTitles', { providerId }),
+          this._jobsManager.triggerJob('purgeProviderCache')
+        ]);
+      } catch (error) {
+        this.logger.error(`Failed to trigger jobs after provider deletion: ${error.message}`);
+        // Don't fail the provider deletion if triggering fails
+      }
 
       return {
         response: {},

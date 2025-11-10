@@ -11,19 +11,15 @@
     {
       "name": "processMainTitles",
       "jobHistoryName": "ProcessMainTitlesJob",
-      "interval": "5m",
-      "timeout": "1m",
       "description": "Generate main titles from provider titles",
-      "schedule": "Every 5 minutes",
+      "schedule": "Manual trigger only",
       "skipIfOtherInProgress": ["processProvidersTitles"]
     },
     {
       "name": "purgeProviderCache",
       "jobHistoryName": "PurgeProviderCacheJob",
-      "interval": "6h",
-      "timeout": "1h",
       "description": "Purge cache for deleted providers",
-      "schedule": "Every 6 hours"
+      "schedule": "Manual trigger only"
     }
   ]
 }

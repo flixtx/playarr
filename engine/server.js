@@ -47,10 +47,12 @@ class EngineServer {
     /**
      * POST /api/jobs/:jobName/trigger
      * Triggers a job manually via bree.run()
+     * Body parameter: { providerId: "provider-id" } to process all titles for a specific provider
      */
     this._app.post('/api/jobs/:jobName/trigger', async (req, res) => {
       try {
         const { jobName } = req.params;
+        const providerId = req.body?.providerId || req.query?.providerId || null;
 
         // Validate job name
         const jobConfig = this._jobsManager.getJobMetadata(jobName);
@@ -58,7 +60,7 @@ class EngineServer {
           return res.status(404).json({ error: `Job '${jobName}' not found` });
         }
 
-        logger.info(`Manual trigger requested for job: ${jobName}`);
+        logger.info(`Manual trigger requested for job: ${jobName}${providerId ? ` (providerId: ${providerId})` : ''}`);
 
         // Validate if job can run using JobsManager
         const validation = await this._jobsManager.canRunJob(jobName);
@@ -73,14 +75,20 @@ class EngineServer {
           });
         }
 
-        // Trigger the job
+        // Trigger the job with optional providerId parameter
         try {
-          await this._bree.run(jobName);
-          logger.info(`Job '${jobName}' triggered successfully`);
+          // For processMainTitles, pass providerId in workerData if provided
+          const workerData = providerId && jobName === 'processMainTitles' 
+            ? { providerId }
+            : undefined;
+          
+          await this._bree.run(jobName, workerData);
+          logger.info(`Job '${jobName}' triggered successfully${providerId ? ` for provider ${providerId}` : ''}`);
           res.json({ 
             success: true, 
             message: `Job '${jobName}' triggered successfully`,
-            jobName 
+            jobName,
+            ...(providerId ? { providerId } : {})
           });
         } catch (error) {
           // Handle "already running" error from Bree (fallback)

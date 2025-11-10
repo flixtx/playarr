@@ -63,7 +63,9 @@ async function main() {
   // Initialize MongoDB connection for job validation
   await initializeMongoDB();
 
-  // Configure Bree.js jobs with schedules
+  // Configure Bree.js jobs
+  // Register all jobs so they can be triggered manually
+  // Only schedule jobs that have an interval (manual-only jobs don't have interval)
   const bree = new Bree({
     root: path.join(__dirname, 'workers'),
     defaultExtension: 'js',
@@ -71,13 +73,18 @@ async function main() {
       const jobConfig = {
         name: job.name,
         path: path.join(__dirname, 'workers', `${job.name}.js`),
-        interval: job.interval,
         worker: {
           workerData: {
             cacheDir: CACHE_DIR
           }
         }
       };
+      
+      // Only include interval if it exists (scheduled jobs)
+      // Jobs without interval are manual-only and won't be scheduled
+      if (job.interval) {
+        jobConfig.interval = job.interval;
+      }
       
       // Only include timeout if it's a valid non-zero value
       // Bree.js doesn't accept "0" as a timeout value
@@ -92,7 +99,7 @@ async function main() {
   // Override the run method to prevent any job from running if it's already running
   // Uses MongoDB job_history as single source of truth
   const originalRun = bree.run.bind(bree);
-  bree.run = async function(name) {
+  bree.run = async function(name, workerData) {
     // Validate if job can run using JobsManager
     const validation = await jobsManager.canRunJob(name);
     
@@ -102,7 +109,14 @@ async function main() {
     }
     
     try {
-      return await originalRun(name);
+      // Merge workerData with existing job config workerData (preserving cacheDir)
+      if (workerData) {
+        const jobConfig = bree.config.jobs.find(j => j.name === name);
+        if (jobConfig && jobConfig.worker && jobConfig.worker.workerData) {
+          workerData = { ...jobConfig.worker.workerData, ...workerData };
+        }
+      }
+      return await originalRun(name, workerData);
     } catch (error) {
       // If Bree throws "already running" error, ignore it (MongoDB is source of truth)
       if (error.message && error.message.includes('already running')) {
@@ -139,9 +153,20 @@ async function main() {
     await bree.start();
 
     logger.info('Job scheduler started. Jobs will run according to schedule.');
-    jobsConfig.jobs.forEach(job => {
-      logger.info(`- ${job.name}: ${job.schedule}`);
-    });
+    jobsConfig.jobs
+      .filter(job => job.interval) // Only show scheduled jobs
+      .forEach(job => {
+        logger.info(`- ${job.name}: ${job.schedule}`);
+      });
+    
+    // Log manual-only jobs separately
+    const manualJobs = jobsConfig.jobs.filter(job => !job.interval);
+    if (manualJobs.length > 0) {
+      logger.info('Manual-only jobs (available for trigger):');
+      manualJobs.forEach(job => {
+        logger.info(`- ${job.name}: ${job.schedule || 'Manual trigger only'}`);
+      });
+    }
     
     // Create and start HTTP server for job control API
     let engineServer = null;

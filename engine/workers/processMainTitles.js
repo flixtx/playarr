@@ -11,6 +11,7 @@ import { ProcessMainTitlesJob } from '../jobs/ProcessMainTitlesJob.js';
  */
 async function processMainTitlesWorker() {
   const cacheDir = workerData.cacheDir;
+  const providerId = workerData.providerId || null; // Optional provider ID
 
   // Initialize providers once (singleton pattern)
   await ProviderInitializer.initialize(cacheDir);
@@ -22,7 +23,7 @@ async function processMainTitlesWorker() {
   const tmdbProvider = ProviderInitializer.getTMDBProvider();
 
   const job = new ProcessMainTitlesJob(cache, mongoData, providers, tmdbProvider);
-  const results = await job.execute();
+  const results = await job.execute(providerId);
 
   return results;
 }

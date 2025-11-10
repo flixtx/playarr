@@ -113,13 +113,13 @@ async function initialize() {
     const titlesManager = new TitlesManager(database, userManager);
     const settingsManager = new SettingsManager(database);
     const statsManager = new StatsManager(database);
-    const providersManager = new ProvidersManager(database, webSocketService, titlesManager);
+    const jobsManager = new JobsManager(database);
+    const providersManager = new ProvidersManager(database, webSocketService, titlesManager, jobsManager);
     const categoriesManager = new CategoriesManager(database, providersManager);
     const streamManager = new StreamManager(database);
     const playlistManager = new PlaylistManager(database);
     const tmdbManager = new TMDBManager(database, settingsManager);
     const xtreamManager = new XtreamManager(database, titlesManager);
-    const jobsManager = new JobsManager(database);
 
     // Initialize user manager (creates default admin user)
     await userManager.initialize();

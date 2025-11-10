@@ -129,14 +129,17 @@ class JobsManager extends BaseManager {
   /**
    * Trigger a job via engine API
    * @param {string} jobName - Job name (e.g., "processProvidersTitles")
+   * @param {Object} [options] - Optional parameters
+   * @param {string} [options.providerId] - Provider ID to process all titles for (for processMainTitles)
    * @returns {Promise<{response: object, statusCode: number}>}
    */
-  async triggerJob(jobName) {
+  async triggerJob(jobName, options = {}) {
     try {
+      const { providerId } = options;
       const engineApiUrl = `${this._engineApiUrl}/api/jobs/${jobName}/trigger`;
 
       try {
-        const response = await axios.post(engineApiUrl, {}, { 
+        const response = await axios.post(engineApiUrl, { providerId: providerId || null }, { 
           timeout: 10000 
         });
         
@@ -144,7 +147,8 @@ class JobsManager extends BaseManager {
           response: {
             success: true,
             message: response.data.message || `Job '${jobName}' triggered successfully`,
-            jobName: response.data.jobName || jobName
+            jobName: response.data.jobName || jobName,
+            ...(response.data.providerId ? { providerId: response.data.providerId } : {})
           },
           statusCode: 200
         };
