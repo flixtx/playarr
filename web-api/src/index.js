@@ -117,7 +117,7 @@ async function initialize() {
     const categoriesManager = new CategoriesManager(database, providersManager);
     const streamManager = new StreamManager(database);
     const playlistManager = new PlaylistManager(database);
-    const tmdbManager = new TMDBManager(settingsManager);
+    const tmdbManager = new TMDBManager(database, settingsManager);
     const xtreamManager = new XtreamManager(database, titlesManager);
     const jobsManager = new JobsManager(database);
 
