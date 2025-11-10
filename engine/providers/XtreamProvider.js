@@ -11,9 +11,10 @@ export class XtreamProvider extends BaseIPTVProvider {
    * @param {import('../managers/StorageManager.js').StorageManager} cache - Storage manager instance for temporary cache
    * @param {import('../managers/StorageManager.js').StorageManager} data - Storage manager instance for persistent data storage
    * @param {import('../services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service instance
+   * @param {import('../providers/TMDBProvider.js').TMDBProvider} [tmdbProvider=null] - TMDB provider instance for matching TMDB IDs
    */
-  constructor(providerData, cache, data, mongoData) {
-    super(providerData, cache, data, mongoData);
+  constructor(providerData, cache, data, mongoData, tmdbProvider = null) {
+    super(providerData, cache, data, mongoData, undefined, tmdbProvider);
         
     /**
      * Configuration for each media type
@@ -486,7 +487,7 @@ export class XtreamProvider extends BaseIPTVProvider {
    * @param {string} type - Media type ('movies', 'tvshows', or 'live')
    * @returns {Promise<Object|null>} Processed title object or null if should be skipped
    */
-  async _processSingleTitle(title, type) {
+  async _processSingleTitle(title, type, processedTitles) {
     const config = this._typeConfig[type];
     if (!config) {
       throw new Error(`Unsupported type: ${type}`);
@@ -499,44 +500,60 @@ export class XtreamProvider extends BaseIPTVProvider {
     // Fetch extended info
     if (!config.extendedInfoAction) {
       this.logger.debug(`${type}: No extended info action for title ${titleId}`);
-      return titleData;
+      // Still need to match TMDB ID and build processed data even if no extended info
+      titleData.type = type;
+    } else {
+      try {
+        const extendedUrl = this._getApiUrl(config.extendedInfoAction, {
+          [config.extendedInfoParam]: titleId
+        });
+
+        this.logger.debug(`${type}: Fetching extended info for title ${titleId}`);
+
+        // Use different TTL for movies (Infinity) vs tvshows (6h)
+        const ttlHours = type === 'movies' ? null : 6;
+        
+        const fullResponseData = await this.fetchWithCache(
+          extendedUrl,
+          [this.providerId, type, 'extended', `${titleId}.json`],
+          ttlHours
+        );
+
+        if (config.parseExtendedInfo) {
+          config.parseExtendedInfo(titleData, fullResponseData);
+        }
+
+        // Clean title name
+        if (titleData.name) {
+          titleData.name = this.cleanupTitle(titleData.name);
+        }
+      } catch (error) {
+        const errorMessage = error.message || 'Unknown error';
+        this.logger.warn(`Failed to fetch extended info for ${type} ${titleId}: ${errorMessage}`);
+        
+        // Add to ignored list since extended info fetch failure indicates content issue
+        this.addIgnoredTitle(type, titleId, `Extended info fetch failed: ${errorMessage}`);
+        
+        return false;
+      }
     }
+
+    // Ensure type is set
+    titleData.type = type;
+
+    // Match TMDB ID if needed (common logic from BaseIPTVProvider)
+    const shouldProcess = await this._matchAndUpdateTMDBId(titleData, type, titleId);
+    if (!shouldProcess) {
+      return false;
+    }
+
+    // Build processed title data
+    const processedTitle = this._buildProcessedTitleData(titleData, type);
     
-    try {
-      const extendedUrl = this._getApiUrl(config.extendedInfoAction, {
-        [config.extendedInfoParam]: titleId
-      });
-
-      this.logger.debug(`${type}: Fetching extended info for title ${titleId}`);
-
-      // Use different TTL for movies (Infinity) vs tvshows (6h)
-      const ttlHours = type === 'movies' ? null : 6;
-      
-      const fullResponseData = await this.fetchWithCache(
-        extendedUrl,
-        [this.providerId, type, 'extended', `${titleId}.json`],
-        ttlHours
-      );
-
-      if (config.parseExtendedInfo) {
-        config.parseExtendedInfo(titleData, fullResponseData);
-      }
-
-      // Clean title name
-      if (titleData.name) {
-        titleData.name = this.cleanupTitle(titleData.name);
-      }
-    } catch (error) {
-      const errorMessage = error.message || 'Unknown error';
-      this.logger.warn(`Failed to fetch extended info for ${type} ${titleId}: ${errorMessage}`);
-      
-      // Add to ignored list since extended info fetch failure indicates content issue
-      this.addIgnoredTitle(type, titleId, `Extended info fetch failed: ${errorMessage}`);
-      
-      return null;
-    }        
-
-    return titleData;
+    // Push to processedTitles array
+    processedTitles.push(processedTitle);
+    
+    return true;
   }
 
   /**

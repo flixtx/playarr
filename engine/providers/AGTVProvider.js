@@ -12,10 +12,11 @@ export class AGTVProvider extends BaseIPTVProvider {
    * @param {import('../managers/StorageManager.js').StorageManager} cache - Storage manager instance for temporary cache
    * @param {import('../managers/StorageManager.js').StorageManager} data - Storage manager instance for persistent data storage
    * @param {import('../services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service instance
+   * @param {import('../providers/TMDBProvider.js').TMDBProvider} [tmdbProvider=null] - TMDB provider instance for matching TMDB IDs
    */
-  constructor(providerData, cache, data, mongoData) {
+  constructor(providerData, cache, data, mongoData, tmdbProvider = null) {
     // AGTV uses 10k batch size since everything is in-memory and extremely fast
-    super(providerData, cache, data, mongoData, 10000);
+    super(providerData, cache, data, mongoData, 10000, tmdbProvider);
         
     /**
      * Configuration for each media type
@@ -457,13 +458,14 @@ export class AGTVProvider extends BaseIPTVProvider {
   }
 
   /**
-   * Process a single title: clean title name
+   * Process a single title: clean title name, match TMDB ID, build processed data, and push to processedTitles
    * @private
    * @param {Object} title - Raw title object
    * @param {string} type - Media type ('movies' or 'tvshows')
-   * @returns {Promise<Object|null>} Processed title object or null if processing fails
+   * @param {Array<Object>} processedTitles - Array to push processed titles to
+   * @returns {Promise<boolean>} true if processed and pushed, false if skipped/ignored
    */
-  async _processSingleTitle(title, type) {
+  async _processSingleTitle(title, type, processedTitles) {
     const config = this._typeConfig[type];
     if (!config) {
       throw new Error(`Unsupported type: ${type}`);
@@ -479,10 +481,25 @@ export class AGTVProvider extends BaseIPTVProvider {
         title.name = title.title;
       }
       
-      return title;
+      // Ensure type is set
+      title.type = type;
+
+      // Match TMDB ID if needed (common logic from BaseIPTVProvider)
+      const shouldProcess = await this._matchAndUpdateTMDBId(title, type, titleId);
+      if (!shouldProcess) {
+        return false;
+      }
+
+      // Build processed title data
+      const processedTitle = this._buildProcessedTitleData(title, type);
+      
+      // Push to processedTitles array
+      processedTitles.push(processedTitle);
+      
+      return true;
     } catch (error) {
       this.logger.warn(`Failed to process ${type} ${titleId}: ${error.message}`);
-      return null;
+      return false;
     }
   }
 
@@ -502,9 +519,9 @@ export class AGTVProvider extends BaseIPTVProvider {
     return {
       title_id: title[config.idField] || null,
       title: title.name,
-      tmdb_id: null, // AGTV doesn't provide extended info
+      tmdb_id: title.tmdb_id || null,
       category_id: title.category_id || null,
-      release_date: null, // AGTV doesn't provide extended info
+      release_date: title.release_date || null,
       streams: title.streams || {}
     };
   }

@@ -66,6 +66,15 @@ export class ProviderInitializer {
       ProviderInitializer.logger.warn(`Failed to load settings from MongoDB: ${error.message}`);
     }
 
+    // Initialize or update TMDB provider with fresh settings
+    // Do this BEFORE creating provider instances so we can pass it to constructor
+    ProviderInitializer.tmdbProvider = await TMDBProvider.getInstance(
+      ProviderInitializer.cache,
+      ProviderInitializer.mongoData,
+      settings
+    );
+    ProviderInitializer.logger.debug('✓ TMDB provider initialized');
+
     // Always load providers fresh from MongoDB
     ProviderInitializer.providers = new Map();
     const providerConfigs = await BaseProvider.loadProviders(ProviderInitializer.mongoData);
@@ -88,14 +97,6 @@ export class ProviderInitializer {
     if (ProviderInitializer.providers.size === 0) {
       ProviderInitializer.logger.warn('No providers were successfully loaded');
     }
-
-    // Initialize or update TMDB provider with fresh settings
-    ProviderInitializer.tmdbProvider = await TMDBProvider.getInstance(
-      ProviderInitializer.cache,
-      ProviderInitializer.mongoData,
-      settings
-    );
-    ProviderInitializer.logger.debug('✓ TMDB provider initialized');
 
     ProviderInitializer.initialized = true;
     ProviderInitializer.logger.debug('Provider initialization completed');
@@ -160,9 +161,9 @@ export class ProviderInitializer {
    */
   static _createProviderInstance(providerData) {
     if (providerData.type === 'agtv') {
-      return new AGTVProvider(providerData, ProviderInitializer.cache, ProviderInitializer.mongoData);
+      return new AGTVProvider(providerData, ProviderInitializer.cache, ProviderInitializer.cache, ProviderInitializer.mongoData, undefined, ProviderInitializer.tmdbProvider);
     } else if (providerData.type === 'xtream') {
-      return new XtreamProvider(providerData, ProviderInitializer.cache, ProviderInitializer.mongoData);
+      return new XtreamProvider(providerData, ProviderInitializer.cache, ProviderInitializer.cache, ProviderInitializer.mongoData, undefined, ProviderInitializer.tmdbProvider);
     } else {
       throw new Error(`Unknown provider type: ${providerData.type}`);
     }

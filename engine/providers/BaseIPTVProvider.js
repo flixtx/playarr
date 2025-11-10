@@ -32,16 +32,21 @@ export class BaseIPTVProvider extends BaseProvider {
   /**
    * @param {Object} providerData - Provider configuration data
    * @param {import('../managers/StorageManager.js').StorageManager} cache - Storage manager instance for temporary cache
+   * @param {import('../managers/StorageManager.js').StorageManager} [data] - Storage manager instance for persistent data storage (legacy, unused)
    * @param {import('../services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service instance
    * @param {number} [metadataBatchSize=100] - Batch size for processing metadata (default: 100)
+   * @param {import('../providers/TMDBProvider.js').TMDBProvider} [tmdbProvider=null] - TMDB provider instance for matching TMDB IDs
    */
-  constructor(providerData, cache, mongoData, metadataBatchSize = 100) {
+  constructor(providerData, cache, data, mongoData, metadataBatchSize = 100, tmdbProvider = null) {
     super(providerData, cache);
     
     if (!mongoData) {
       throw new Error('MongoDataService is required');
     }
     this.mongoData = mongoData;
+    
+    // TMDB provider instance for matching TMDB IDs
+    this.tmdbProvider = tmdbProvider;
     
     // In-memory cache for titles and ignored titles
     // Loaded once at the start of job execution and kept in memory
@@ -161,16 +166,14 @@ export class BaseIPTVProvider extends BaseProvider {
 
         // Process batch titles in parallel (rate limiting happens inside fetchWithCache)
         const batchPromises = batch.map(title => 
-          this._processSingleTitle(title, type)
+          this._processSingleTitle(title, type, processedTitles)
         );
 
         const batchResults = await Promise.allSettled(batchPromises);
 
-        // Accumulate results instead of saving immediately
+        // Count successes - titles already pushed to processedTitles by _processSingleTitle
         for (const result of batchResults) {
-          if (result.status === 'fulfilled' && result.value) {
-            const processedTitle = this._buildProcessedTitleData(result.value, type);
-            processedTitles.push(processedTitle);
+          if (result.status === 'fulfilled' && result.value === true) {
             totalProcessed++;
           } else if (result.status === 'rejected') {
             this.logger.warn(`${type}: Failed to process title: ${result.reason?.message || result.reason}`);
@@ -220,14 +223,60 @@ export class BaseIPTVProvider extends BaseProvider {
   }
 
   /**
+   * Match TMDB ID for a title if needed and update title data
+   * @private
+   * @param {Object} titleData - Title data object
+   * @param {string} type - Media type ('movies' or 'tvshows')
+   * @param {string} titleId - Title ID
+   * @returns {Promise<boolean>} true if title should be processed, false if should be skipped/ignored
+   */
+  async _matchAndUpdateTMDBId(titleData, type, titleId) {
+    // Check if title is already ignored
+    const titleKey = generateTitleKey(type, titleId);
+    const ignoredTitles = this.getAllIgnored();
+    if (ignoredTitles[titleKey]) {
+      this.logger.debug(`${type}: Title ${titleId} is already ignored, skipping`);
+      return false;
+    }
+
+    // Match TMDB ID if needed
+    if (!titleData.tmdb_id && this.tmdbProvider) {
+      try {
+        const tmdbId = await this.tmdbProvider.matchTMDBIdForTitle(titleData, type, this.getProviderType());
+        
+        if (tmdbId) {
+          titleData.tmdb_id = tmdbId;
+          titleData.lastUpdated = new Date().toISOString();
+        } else {
+          // Matching failed, mark as ignored
+          this.addIgnoredTitle(type, titleId, 'TMDB matching failed');
+          return false;
+        }
+      } catch (error) {
+        this.logger.warn(`TMDB matching error for ${type} ${titleId}: ${error.message}`);
+        // Mark as ignored on error
+        this.addIgnoredTitle(type, titleId, `TMDB matching error: ${error.message}`);
+        return false;
+      }
+    } else if (titleData.tmdb_id) {
+      // Already has TMDB ID, just update lastUpdated
+      titleData.lastUpdated = new Date().toISOString();
+    }
+
+    return true;
+  }
+
+  /**
    * Process a single title (provider-specific)
+   * Fetches extended info, matches TMDB ID if needed, builds processed data, and pushes to processedTitles
    * @abstract
    * @param {Object} title - Raw title object
    * @param {string} type - Media type ('movies' or 'tvshows')
-   * @returns {Promise<Object|null>} Processed title object or null if should be skipped
+   * @param {Array<Object>} processedTitles - Array to push processed titles to
+   * @returns {Promise<boolean>} true if processed and pushed, false if skipped/ignored
    */
-  async _processSingleTitle(title, type) {
-    throw new Error('_processSingleTitle(title, type) must be implemented by subclass');
+  async _processSingleTitle(title, type, processedTitles) {
+    throw new Error('_processSingleTitle(title, type, processedTitles) must be implemented by subclass');
   }
 
   /**

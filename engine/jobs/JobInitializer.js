@@ -67,6 +67,11 @@ export class JobInitializer {
       this.logger.warn(`Failed to load settings from MongoDB: ${error.message}`);
     }
 
+    // Initialize TMDB provider (singleton) - now async and requires settings
+    // Do this BEFORE creating provider instances so we can pass it to constructor
+    this.tmdbProvider = await TMDBProvider.getInstance(this.cache, this.mongoData, settings);
+    this.logger.info('✓ TMDB provider initialized');
+
     // Initialize IPTV providers
     this.providers = new Map();
     const providerConfigs = await BaseProvider.loadProviders(this.mongoData);
@@ -90,10 +95,6 @@ export class JobInitializer {
       this.logger.warn('No providers were successfully loaded');
     }
 
-    // Initialize TMDB provider (singleton) - now async and requires settings
-    this.tmdbProvider = await TMDBProvider.getInstance(this.cache, this.mongoData, settings);
-    this.logger.info('✓ TMDB provider initialized');
-
     this.logger.info('Job dependencies initialization completed');
 
     return {
@@ -112,9 +113,9 @@ export class JobInitializer {
    */
   _createProviderInstance(providerData) {
     if (providerData.type === 'agtv') {
-      return new AGTVProvider(providerData, this.cache, this.mongoData);
+      return new AGTVProvider(providerData, this.cache, this.cache, this.mongoData, undefined, this.tmdbProvider);
     } else if (providerData.type === 'xtream') {
-      return new XtreamProvider(providerData, this.cache, this.mongoData);
+      return new XtreamProvider(providerData, this.cache, this.cache, this.mongoData, undefined, this.tmdbProvider);
     } else {
       throw new Error(`Unknown provider type: ${providerData.type}`);
     }

@@ -5,7 +5,7 @@
       "jobHistoryName": "ProcessProvidersTitlesJob",
       "interval": "1h",
       "timeout": "10s",
-      "description": "Fetch metadata from IPTV providers",
+      "description": "Fetch metadata from IPTV providers and match TMDB IDs",
       "schedule": "Every 1 hour"
     },
     {
@@ -13,7 +13,7 @@
       "jobHistoryName": "ProcessMainTitlesJob",
       "interval": "5m",
       "timeout": "1m",
-      "description": "Match TMDB IDs and generate main titles",
+      "description": "Generate main titles from provider titles",
       "schedule": "Every 5 minutes",
       "skipIfOtherInProgress": ["processProvidersTitles"]
     },

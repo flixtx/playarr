@@ -2,7 +2,8 @@ import { BaseJob } from './BaseJob.js';
 
 /**
  * Job for processing provider titles (fetching metadata from IPTV providers)
- * Handles fetching categories and metadata from all configured IPTV providers
+ * Handles fetching categories and metadata from all configured IPTV providers,
+ * and matching TMDB IDs for provider titles
  * @extends {BaseJob}
  */
 export class ProcessProvidersTitlesJob extends BaseJob {
