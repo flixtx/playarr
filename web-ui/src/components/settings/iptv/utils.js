@@ -25,12 +25,14 @@ export const fetchIPTVProviders = async () => {
   }
 };
 
-export const saveIPTVProvider = async (provider) => {
-  if (provider.id) {
-    const response = await axiosInstance.put(`${API_ENDPOINTS.providers}/${provider.id}`, provider);
+export const saveIPTVProvider = async (provider, isNew = false) => {
+  // If it's a new provider, always use POST (even if id is provided)
+  // If it's an existing provider, use PUT with the provider id
+  if (isNew || !provider.id) {
+    const response = await axiosInstance.post(API_ENDPOINTS.providers, provider);
     return response.data;
   } else {
-    const response = await axiosInstance.post(API_ENDPOINTS.providers, provider);
+    const response = await axiosInstance.put(`${API_ENDPOINTS.providers}/${provider.id}`, provider);
     return response.data;
   }
 };

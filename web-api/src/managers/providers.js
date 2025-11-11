@@ -257,6 +257,22 @@ class ProvidersManager extends BaseManager {
         providerData.priority = maxPriority + 1;
       }
 
+      // Set default api_rate based on provider type
+      if (!providerData.api_rate) {
+        const providerType = providerData.type.toLowerCase();
+        if (providerType === 'agtv') {
+          providerData.api_rate = {
+            concurrent: 10,
+            duration_seconds: 1
+          };
+        } else if (providerType === 'xtream') {
+          providerData.api_rate = {
+            concurrent: 4,
+            duration_seconds: 1
+          };
+        }
+      }
+
       // Add provider to array and save
       providers.push(providerData);
       await this._writeAllProviders(providers);
@@ -319,6 +335,22 @@ class ProvidersManager extends BaseManager {
         id: providerId, // Ensure id doesn't change
         lastUpdated: now // Update timestamp
       };
+
+      // Set default api_rate if missing (backward compatibility)
+      if (!updatedProvider.api_rate) {
+        const providerType = updatedProvider.type?.toLowerCase();
+        if (providerType === 'agtv') {
+          updatedProvider.api_rate = {
+            concurrent: 10,
+            duration_seconds: 1
+          };
+        } else if (providerType === 'xtream') {
+          updatedProvider.api_rate = {
+            concurrent: 4,
+            duration_seconds: 1
+          };
+        }
+      }
 
       // Update in array and save
       providers[providerIndex] = updatedProvider;

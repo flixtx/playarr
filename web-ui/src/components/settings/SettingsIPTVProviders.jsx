@@ -128,7 +128,7 @@ function SettingsIPTVProviders() {
 
   const handleSave = async (providerData) => {
     try {
-      const savedProvider = await saveIPTVProvider(providerData);
+      const savedProvider = await saveIPTVProvider(providerData, isNewProvider);
       setSuccess(isNewProvider ? 'Provider added successfully' : 'Provider updated successfully');
       setTimeout(() => setSuccess(null), 3000);
 
