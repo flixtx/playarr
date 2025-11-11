@@ -22,7 +22,10 @@ export class TMDBProvider extends BaseProvider {
       const providerData = {
         id: 'tmdb',
         type: 'tmdb',
-        api_rate: settings.tmdb_api_rate,
+        api_rate: {
+          concurrent: 45,
+          duration_seconds: 1
+        },
         token: settings.tmdb_token || '' // Allow empty token
       };
 

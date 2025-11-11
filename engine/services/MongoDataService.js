@@ -593,8 +593,7 @@ export class MongoDataService {
         lastUpdated: now
       },
       $setOnInsert: {
-        createdAt: now,
-        execution_count: 0
+        createdAt: now
       }
     };
     
@@ -618,6 +617,9 @@ export class MongoDataService {
       if (!result.error) {
         update.$set.last_execution = now;
       }
+    } else {
+      // Only set execution_count to 0 on insert when result is null
+      update.$setOnInsert.execution_count = 0;
     }
     
     await collection.updateOne(filter, update, { upsert: true });

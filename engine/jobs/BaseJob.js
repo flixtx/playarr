@@ -48,9 +48,6 @@ export class BaseJob {
     if (!this.mongoData) {
       throw new Error('MongoDB data service is required');
     }
-    if (!this.providers || this.providers.size === 0) {
-      throw new Error('At least one IPTV provider is required');
-    }
     if (!this.tmdbProvider) {
       throw new Error('TMDB provider is required');
     }
