@@ -11,7 +11,6 @@ import {
     Grid
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import axiosInstance from '../../config/axios';
 import { API_ENDPOINTS } from '../../config/api';
 
@@ -52,14 +51,10 @@ const getStatusColor = (status) => {
 const formatJobResult = (jobName, lastResult) => {
     if (!lastResult) return null;
 
-    if (jobName === 'processProvidersTitles' && Array.isArray(lastResult.results)) {
+    if (jobName === 'syncIPTVProviderTitles' && Array.isArray(lastResult.results)) {
         const totalMovies = lastResult.results.reduce((sum, r) => sum + (r.movies || 0), 0);
         const totalTvShows = lastResult.results.reduce((sum, r) => sum + (r.tvShows || 0), 0);
         return `Processed ${lastResult.providers_processed || 0} provider(s): ${totalMovies} movies, ${totalTvShows} TV shows`;
-    } else if (jobName === 'processMainTitles' && lastResult.movies !== undefined) {
-        return `Generated ${lastResult.movies || 0} movies, ${lastResult.tvShows || 0} TV shows`;
-    } else if (jobName === 'purgeProviderCache') {
-        return `Removed ${lastResult.cache_directories_removed || 0} cache directory/directories from ${lastResult.providers_processed || 0} provider(s)`;
     }
 
     return JSON.stringify(lastResult);
@@ -68,10 +63,7 @@ const formatJobResult = (jobName, lastResult) => {
 /**
  * Job card component
  */
-const JobCard = ({ job, onTrigger, isTriggering }) => {
-    const isRunning = job.status === 'running';
-    const canTrigger = !isRunning && !isTriggering;
-
+const JobCard = ({ job }) => {
     return (
         <Paper
             elevation={2}
@@ -98,22 +90,6 @@ const JobCard = ({ job, onTrigger, isTriggering }) => {
                         color={getStatusColor(job.status)}
                         size="small"
                     />
-                    <Tooltip title="Trigger Job">
-                        <span>
-                            <IconButton
-                                color="primary"
-                                onClick={() => onTrigger(job.name)}
-                                disabled={!canTrigger}
-                                size="small"
-                            >
-                                {isTriggering ? (
-                                    <CircularProgress size={20} />
-                                ) : (
-                                    <PlayArrowIcon />
-                                )}
-                            </IconButton>
-                        </span>
-                    </Tooltip>
                 </Box>
             </Box>
 
@@ -160,13 +136,12 @@ const JobCard = ({ job, onTrigger, isTriggering }) => {
 
 /**
  * SettingsJobs component
- * Displays list of engine jobs with details and trigger buttons
+ * Displays list of engine jobs with details (job triggering removed)
  */
 const SettingsJobs = () => {
     const [jobs, setJobs] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-    const [triggeringJob, setTriggeringJob] = useState(null);
     const [engineReachable, setEngineReachable] = useState(true);
 
     /**
@@ -224,40 +199,6 @@ const SettingsJobs = () => {
             }
         } finally {
             setLoading(false);
-        }
-    };
-
-    /**
-     * Trigger a job
-     */
-    const handleTriggerJob = async (jobName) => {
-        setTriggeringJob(jobName);
-        setError(null);
-
-        try {
-            const response = await axiosInstance.post(API_ENDPOINTS.triggerJob(jobName));
-            
-            if (response.data.success) {
-                // Refresh jobs list after a short delay to get updated status
-                setTimeout(() => {
-                    fetchJobs();
-                }, 1000);
-            } else {
-                setError(response.data.error || 'Failed to trigger job');
-            }
-        } catch (err) {
-            console.error('Error triggering job:', err);
-            const errorMessage = err.response?.data?.error || 'Failed to trigger job';
-            setError(errorMessage);
-            
-            // If job is already running, refresh the list
-            if (err.response?.status === 409) {
-                setTimeout(() => {
-                    fetchJobs();
-                }, 1000);
-            }
-        } finally {
-            setTriggeringJob(null);
         }
     };
 
@@ -323,7 +264,7 @@ const SettingsJobs = () => {
 
             {!engineReachable && (
                 <Alert severity="warning" sx={{ mb: 3 }}>
-                    Engine API is not reachable. Job triggering may not work, but you can view job history.
+                    Engine API is not reachable. You can view job history.
                 </Alert>
             )}
 
@@ -341,11 +282,7 @@ const SettingsJobs = () => {
                 <Grid container spacing={2}>
                     {jobs.map((job) => (
                         <Grid item xs={12} md={4} key={job.name}>
-                            <JobCard
-                                job={job}
-                                onTrigger={handleTriggerJob}
-                                isTriggering={triggeringJob === job.name}
-                            />
+                            <JobCard job={job} />
                         </Grid>
                     ))}
                 </Grid>

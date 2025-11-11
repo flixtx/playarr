@@ -1,5 +1,6 @@
 import express from 'express';
 import { createLogger } from './utils/logger.js';
+import { ApplicationContext } from './context/ApplicationContext.js';
 
 const logger = createLogger('EngineServer');
 
@@ -128,6 +129,80 @@ class EngineServer {
         res.status(500).json({ 
           error: `Failed to trigger job: ${error.message}` 
         });
+      }
+    });
+
+    /**
+     * POST /api/providers/:providerId/action
+     * Trigger a provider action (add, delete, enable, disable, categories-changed)
+     * Body: { action: "added" | "deleted" | "enabled" | "disabled" | "categories-changed" }
+     */
+    this._app.post('/api/providers/:providerId/action', async (req, res) => {
+      try {
+        const { providerId } = req.params;
+        const { action } = req.body;
+
+        if (!action) {
+          return res.status(400).json({ error: 'action is required' });
+        }
+
+        const actionToJobMap = {
+          'added': 'iptvProviderAdded',
+          'deleted': 'iptvProviderDeleted',
+          'enabled': 'iptvProviderEnabled',
+          'disabled': 'iptvProviderDisabled',
+          'categories-changed': 'iptvProviderCategoriesChanged'
+        };
+
+        const jobName = actionToJobMap[action];
+        if (!jobName) {
+          return res.status(400).json({ error: `Invalid action: ${action}` });
+        }
+
+        // Add provider to action queue
+        const context = ApplicationContext.getInstance();
+        context.addProviderToActionQueue(jobName, providerId);
+
+        logger.info(`Provider action queued: ${action} for provider ${providerId}`);
+        res.json({ 
+          success: true, 
+          message: `Provider action '${action}' queued for provider ${providerId}`,
+          providerId,
+          action
+        });
+      } catch (error) {
+        logger.error(`Error queuing provider action:`, error);
+        res.status(500).json({ error: `Failed to queue provider action: ${error.message}` });
+      }
+    });
+
+    /**
+     * POST /api/settings/monitor
+     * Trigger settings monitor job manually
+     */
+    this._app.post('/api/settings/monitor', async (req, res) => {
+      try {
+        logger.info('Manual trigger requested for settings monitor job');
+        
+        const validation = await this._jobsManager.canRunJob('settingsMonitor');
+        
+        if (!validation.canRun) {
+          return res.status(409).json({ 
+            error: validation.reason,
+            status: 'blocked',
+            blockingJobs: validation.blockingJobs
+          });
+        }
+
+        await this._scheduler.runJob('settingsMonitor');
+        logger.info('Settings monitor job triggered successfully');
+        res.json({ 
+          success: true, 
+          message: 'Settings monitor job triggered successfully'
+        });
+      } catch (error) {
+        logger.error(`Error triggering settings monitor:`, error);
+        res.status(500).json({ error: `Failed to trigger settings monitor: ${error.message}` });
       }
     });
 

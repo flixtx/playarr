@@ -40,20 +40,25 @@ class CategoriesManager extends BaseManager {
   /**
    * Transform category from engine format to API format
    * @private
+   * @param {Object} cat - Category object from database
+   * @param {Set<string>} enabledCategoryKeys - Set of enabled category keys from provider config
    */
-  _transformCategoryToApiFormat(cat) {
+  _transformCategoryToApiFormat(cat, enabledCategoryKeys = null) {
     const categoryKey = cat.category_key || `${cat.type}-${cat.category_id}`;
+    // If enabledCategoryKeys is provided, use it; otherwise default to false
+    const enabled = enabledCategoryKeys ? enabledCategoryKeys.has(categoryKey) : (cat.enabled !== undefined ? cat.enabled : false);
     return {
       key: categoryKey,
       type: cat.type, // Use engine type directly (tvshows or movies)
       category_id: cat.category_id,
       category_name: cat.category_name,
-      enabled: cat.enabled !== undefined ? cat.enabled : false
+      enabled: enabled
     };
   }
 
   /**
    * Get categories for a specific provider
+   * Reads enabled status from provider config's enabled_categories field
    * Matches Python's CategoriesService.get_categories()
    */
   async getCategories(providerId) {
@@ -78,8 +83,15 @@ class CategoriesManager extends BaseManager {
         };
       }
 
-      // Transform categories to API format
-      const transformedCategories = categories.map(cat => this._transformCategoryToApiFormat(cat));
+      // Get enabled categories from provider config
+      const enabledCategories = provider.enabled_categories || { movies: [], tvshows: [] };
+      const enabledCategoryKeys = new Set([
+        ...(enabledCategories.movies || []),
+        ...(enabledCategories.tvshows || [])
+      ]);
+
+      // Transform categories to API format with enabled status from provider config
+      const transformedCategories = categories.map(cat => this._transformCategoryToApiFormat(cat, enabledCategoryKeys));
 
       return {
         response: transformedCategories,
@@ -95,8 +107,103 @@ class CategoriesManager extends BaseManager {
   }
 
   /**
-   * Update a category for a specific provider
-   * Matches Python's CategoriesService.update_category()
+   * Update enabled categories in batch for a provider
+   * Updates provider document's enabled_categories field and triggers engine action
+   * @param {string} providerId - Provider ID
+   * @param {Object} enabledCategories - Object with movies and tvshows arrays of category keys
+   * @param {Array<string>} enabledCategories.movies - Array of enabled movie category keys
+   * @param {Array<string>} enabledCategories.tvshows - Array of enabled TV show category keys
+   * @returns {Promise<{response: Object, statusCode: number}>}
+   */
+  async updateCategoriesBatch(providerId, enabledCategories) {
+    try {
+      // Validate provider exists
+      const provider = await this._getProviderById(providerId);
+      if (!provider) {
+        return {
+          response: { error: 'Provider not found' },
+          statusCode: 404,
+        };
+      }
+
+      // Validate enabledCategories structure
+      if (!enabledCategories || typeof enabledCategories !== 'object') {
+        return {
+          response: { error: 'enabledCategories must be an object with movies and tvshows arrays' },
+          statusCode: 400,
+        };
+      }
+
+      if (!Array.isArray(enabledCategories.movies) || !Array.isArray(enabledCategories.tvshows)) {
+        return {
+          response: { error: 'enabledCategories must have movies and tvshows arrays' },
+          statusCode: 400,
+        };
+      }
+
+      // Update provider document's enabled_categories field
+      const collection = this._database.getCollection('iptv_providers');
+      const now = new Date();
+      
+      await collection.updateOne(
+        { id: providerId },
+        {
+          $set: {
+            enabled_categories: {
+              movies: enabledCategories.movies || [],
+              tvshows: enabledCategories.tvshows || []
+            },
+            lastUpdated: now
+          }
+        }
+      );
+
+      // Trigger engine action for categories changed
+      await this._triggerEngineProviderAction(providerId, 'categories-changed');
+
+      return {
+        response: {
+          success: true,
+          message: 'Categories updated successfully',
+          enabled_categories: enabledCategories
+        },
+        statusCode: 200,
+      };
+    } catch (error) {
+      this.logger.error('Error updating categories batch:', error);
+      return {
+        response: { error: 'Failed to update categories' },
+        statusCode: 500,
+      };
+    }
+  }
+
+  /**
+   * Trigger engine provider action
+   * @private
+   * @param {string} providerId - Provider ID
+   * @param {string} action - Action type: 'added' | 'deleted' | 'enabled' | 'disabled' | 'categories-changed'
+   */
+  async _triggerEngineProviderAction(providerId, action) {
+    try {
+      const axios = (await import('axios')).default;
+      const engineApiUrl = 'http://127.0.0.1:3002';
+      await axios.post(
+        `${engineApiUrl}/api/providers/${providerId}/action`,
+        { action },
+        { timeout: 5000 }
+      );
+      this.logger.info(`Triggered engine action '${action}' for provider ${providerId}`);
+    } catch (error) {
+      this.logger.error(`Failed to trigger engine action for provider ${providerId}: ${error.message}`);
+      // Don't throw - category update should succeed even if engine notification fails
+    }
+  }
+
+  /**
+   * Update a category for a specific provider (deprecated - use updateCategoriesBatch instead)
+   * Updates provider's enabled_categories field for a single category
+   * Kept for backward compatibility but should use batch updates
    */
   async updateCategory(providerId, categoryKey, categoryData) {
     try {
@@ -124,7 +231,7 @@ class CategoriesManager extends BaseManager {
         };
       }
 
-      // Validate type value (use engine format: tvshows)
+      // Validate type value
       if (!['movies', 'tvshows'].includes(categoryData.type)) {
         return {
           response: {
@@ -143,64 +250,58 @@ class CategoriesManager extends BaseManager {
         };
       }
 
-      // Use type directly (no normalization)
+      // Use type directly
       const categoryId = keyParts.slice(1).join('-'); // Handle category_id that might contain dashes
       const engineCategoryKey = `${categoryData.type}-${categoryId}`;
 
-      // Get collection name and key field
-      const collectionName = this._getCategoriesCollectionName(providerId);
-      const keyField = getCollectionKey(DatabaseCollections.CATEGORIES); // 'key'
+      // Get current enabled categories from provider
+      const enabledCategories = provider.enabled_categories || { movies: [], tvshows: [] };
+      const typeArray = enabledCategories[categoryData.type] || [];
 
-      // Find category by category_key
-      const category = await this._database.getData(collectionName, { [keyField]: engineCategoryKey });
+      // Update the array
+      let updatedArray;
+      if (categoryData.enabled) {
+        // Add if not already present
+        updatedArray = typeArray.includes(engineCategoryKey) 
+          ? typeArray 
+          : [...typeArray, engineCategoryKey];
+      } else {
+        // Remove if present
+        updatedArray = typeArray.filter(key => key !== engineCategoryKey);
+      }
 
-      if (!category) {
-        // Try finding by category_key field directly
-        const categoryByKey = await this._database.getData(collectionName, { category_key: engineCategoryKey });
-        if (!categoryByKey) {
-          return {
-            response: { error: 'Category not found' },
-            statusCode: 404,
-          };
+      // Update provider document
+      const collection = this._database.getCollection('iptv_providers');
+      const now = new Date();
+      
+      await collection.updateOne(
+        { id: providerId },
+        {
+          $set: {
+            [`enabled_categories.${categoryData.type}`]: updatedArray,
+            lastUpdated: now
+          }
         }
-        // Update category
-        const updatedCategory = {
-          ...categoryByKey,
-          enabled: categoryData.enabled,
-          lastUpdated: new Date().toISOString()
-        };
+      );
 
-        await this._database.updateData(
-          collectionName,
-          updatedCategory,
-          { category_key: engineCategoryKey }
-        );
+      // Trigger engine action for categories changed
+      await this._triggerEngineProviderAction(providerId, 'categories-changed');
 
-        // Return in API format
-        const categoryResponse = this._transformCategoryToApiFormat(updatedCategory);
+      // Get updated category for response
+      const collectionName = this._getCategoriesCollectionName(providerId);
+      const category = await this._database.getData(collectionName, { category_key: engineCategoryKey });
+      
+      if (!category) {
         return {
-          response: categoryResponse,
-          statusCode: 200,
+          response: { error: 'Category not found' },
+          statusCode: 404,
         };
       }
 
-      // Update category
-      const updatedCategory = {
-        ...category,
-        enabled: categoryData.enabled,
-        lastUpdated: new Date().toISOString()
-      };
-
-      await this._database.updateData(
-        collectionName,
-        updatedCategory,
-        { [keyField]: engineCategoryKey }
-      );
-
-      // Return in API format
-      const categoryResponse = this._transformCategoryToApiFormat(updatedCategory);
-
-      // TODO: Broadcast WebSocket event for provider change
+      // Return in API format with updated enabled status
+      const enabledCategoryKeys = new Set([engineCategoryKey]);
+      const categoryResponse = this._transformCategoryToApiFormat(category, enabledCategoryKeys);
+      categoryResponse.enabled = categoryData.enabled;
 
       return {
         response: categoryResponse,

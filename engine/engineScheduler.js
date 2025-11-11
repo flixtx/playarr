@@ -138,15 +138,17 @@ export class EngineScheduler {
     this.logger.info(`Starting job '${name}'${workerData?.providerId ? ` (providerId: ${workerData.providerId})` : ''}`);
 
     try {
-      const workerPath = path.join(this._workersDir, `${name}.js`);
+      // Use generic worker for all jobs
+      const workerPath = path.join(this._workersDir, 'genericJobWorker.js');
       const jobModule = await import(pathToFileURL(workerPath).href);
       const jobFn = jobModule.default || jobModule;
 
       if (typeof jobFn !== 'function') {
-        throw new Error(`Worker file ${name}.js does not export a default function`);
+        throw new Error(`Worker file genericJobWorker.js does not export a default function`);
       }
 
-      const result = await jobFn(workerData || {});
+      // Pass job name to the generic worker along with any existing workerData
+      const result = await jobFn({ ...workerData, jobName: name });
 
       if (result !== undefined) {
         this.logger.info(`Job '${name}' completed successfully`);

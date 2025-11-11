@@ -15,7 +15,7 @@ const __dirname = path.dirname(__filename);
  */
 export class BaseProvider {
   /**
-   * Load all enabled provider configurations from MongoDB
+   * Load all provider configurations from MongoDB (non-deleted only)
    * @param {import('../services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service instance
    * @returns {Promise<Object[]>} Array of provider configuration objects, sorted by priority
    */
@@ -27,14 +27,11 @@ export class BaseProvider {
     }
 
     try {
-      // Query enabled providers from MongoDB, sorted by priority
-      const providers = await mongoData.getIPTVProviders();
-      
-      // Filter enabled providers (should already be filtered by getIPTVProviders, but double-check)
-      const enabledProviders = providers.filter(p => p.enabled !== false);
+      // Query all non-deleted providers from MongoDB, sorted by priority
+      const providers = await mongoData.getAllIPTVProviders();
       
       // Sort by priority (lower number = higher priority)
-      return enabledProviders.sort((a, b) => (a.priority || 999) - (b.priority || 999));
+      return providers.sort((a, b) => (a.priority || 999) - (b.priority || 999));
     } catch (error) {
       const logger = createLogger('BaseProvider');
       logger.error(`Error loading providers from MongoDB: ${error.message}`);

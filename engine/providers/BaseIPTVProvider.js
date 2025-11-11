@@ -324,7 +324,7 @@ export class BaseIPTVProvider extends BaseProvider {
 
   /**
    * Save categories for a provider by type to MongoDB
-   * Merges with existing categories, preserving enabled status
+   * Categories no longer have enabled field - enabled status is stored in provider config
    * @param {string} type - Category type ('movies' or 'tvshows')
    * @param {Array<{category_id: number|string, category_name: string}>} categories - Array of category data objects
    * @returns {Promise<Object>} Saved category data object
@@ -336,15 +336,7 @@ export class BaseIPTVProvider extends BaseProvider {
 
     this.logger.debug(`Saving ${categories.length} categories for ${type} to MongoDB`);
 
-    // Load existing categories to preserve enabled status
-    const existingCategories = await this.mongoData.getProviderCategories(this.providerId, type);
-    const existingCategoryMap = new Map();
-    existingCategories.forEach(cat => {
-      const categoryKey = cat.category_key || generateCategoryKey(cat.type, cat.category_id);
-      existingCategoryMap.set(categoryKey, cat);
-    });
-
-    // Prepare categories with type and category_key
+    // Prepare categories with type and category_key (no enabled field)
     const processedCategories = categories.map(cat => {
       if (!cat.category_id) return null;
 
@@ -352,14 +344,12 @@ export class BaseIPTVProvider extends BaseProvider {
       const categoryType = cat.type || type;
       const categoryKey = cat.category_key || generateCategoryKey(categoryType, cat.category_id);
 
-      const existingCategory = existingCategoryMap.get(categoryKey);
-
       return {
         category_id: cat.category_id || cat.id,
         category_name: cat.category_name || cat.name,
         type: categoryType,
-        category_key: categoryKey,
-        enabled: existingCategory ? existingCategory.enabled : false, // Preserve enabled status or default to false
+        category_key: categoryKey
+        // Note: enabled field removed - enabled status is now in provider.enabled_categories
       };
     }).filter(Boolean);
 
@@ -383,13 +373,26 @@ export class BaseIPTVProvider extends BaseProvider {
 
   /**
    * Load categories for a provider by type from MongoDB
+   * Merges enabled status from provider config
    * @param {string} type - Category type ('movies' or 'tvshows')
-   * @returns {Promise<Array<{category_id: number, category_name: string, enabled: boolean, type: string, category_key: string}>>} Array of category data objects
+   * @returns {Promise<Array<{category_id: number, category_name: string, enabled: boolean, type: string, category_key: string}>>} Array of category data objects with enabled status
    */
   async loadCategories(type) {
     try {
       const categories = await this.mongoData.getProviderCategories(this.providerId, type);
-      return categories;
+      
+      // Get enabled categories from provider config
+      const enabledCategories = this.providerData.enabled_categories || { movies: [], tvshows: [] };
+      const enabledCategoryKeys = new Set(enabledCategories[type] || []);
+      
+      // Merge enabled status into categories
+      return categories.map(cat => {
+        const categoryKey = cat.category_key || generateCategoryKey(cat.type, cat.category_id);
+        return {
+          ...cat,
+          enabled: enabledCategoryKeys.has(categoryKey)
+        };
+      });
     } catch (error) {
       this.logger.error(`Error loading categories from MongoDB: ${error.message}`);
       return [];
@@ -397,15 +400,67 @@ export class BaseIPTVProvider extends BaseProvider {
   }
 
   /**
+   * Load all categories for a provider from MongoDB (both movies and tvshows)
+   * @returns {Promise<Array<{category_id: number, category_name: string, type: string, category_key: string}>>} Array of all category data objects
+   */
+  async getAllCategories() {
+    try {
+      const categories = await this.mongoData.getProviderCategories(this.providerId);
+      return categories;
+    } catch (error) {
+      this.logger.error(`Error loading all categories from MongoDB: ${error.message}`);
+      return [];
+    }
+  }
+
+  /**
    * Get category enabled status by ID and type
+   * Checks provider config's enabled_categories field
    * @param {string} type - Category type ('movies' or 'tvshows')
    * @param {number} categoryId - Category ID
-   * @returns {Promise<boolean>} True if category is enabled, false otherwise (defaults to false if not found)
+   * @returns {boolean} True if category is enabled, false otherwise (defaults to false if not found)
    */
-  async isCategoryEnabled(type, categoryId) {
-    const categories = await this.loadCategories(type);
-    const category = categories.find(cat => cat.category_id === categoryId);
-    return category ? category.enabled : false;
+  isCategoryEnabled(type, categoryId) {
+    const categoryKey = generateCategoryKey(type, categoryId);
+    const enabledCategories = this.providerData.enabled_categories || { movies: [], tvshows: [] };
+    const enabledCategoryKeys = enabledCategories[type] || [];
+    return enabledCategoryKeys.includes(categoryKey);
+  }
+
+  /**
+   * Update enabled categories in provider configuration and persist to MongoDB
+   * @param {Object} enabledCategories - Object with movies and tvshows arrays of category keys
+   * @param {Array<string>} enabledCategories.movies - Array of enabled movie category keys
+   * @param {Array<string>} enabledCategories.tvshows - Array of enabled TV show category keys
+   * @returns {Promise<void>}
+   */
+  async updateEnabledCategories(enabledCategories) {
+    if (!enabledCategories || typeof enabledCategories !== 'object') {
+      throw new Error('enabledCategories must be an object with movies and tvshows arrays');
+    }
+
+    if (!Array.isArray(enabledCategories.movies) || !Array.isArray(enabledCategories.tvshows)) {
+      throw new Error('enabledCategories must have movies and tvshows arrays');
+    }
+
+    // Update provider config in memory
+    this.providerData.enabled_categories = {
+      movies: enabledCategories.movies || [],
+      tvshows: enabledCategories.tvshows || []
+    };
+
+    // Persist to MongoDB
+    await this.mongoData.db.collection('iptv_providers').updateOne(
+      { id: this.providerId },
+      {
+        $set: {
+          enabled_categories: this.providerData.enabled_categories,
+          lastUpdated: new Date()
+        }
+      }
+    );
+
+    this.logger.info(`Updated enabled categories for provider ${this.providerId}`);
   }
 
   /**
@@ -713,6 +768,152 @@ export class BaseIPTVProvider extends BaseProvider {
     this._titlesCache = null;
     this._ignoredCache = null;
     this.logger.debug('Unloaded titles from memory cache');
+  }
+
+  /**
+   * Delete all provider titles for this provider
+   * @returns {Promise<number>} Number of deleted titles
+   */
+  async deleteAllTitles() {
+    if (!this.mongoData) {
+      throw new Error('MongoDataService is required');
+    }
+    const deleted = await this.mongoData.deleteProviderTitles(this.providerId);
+    this.logger.info(`Deleted ${deleted} provider titles`);
+    return deleted;
+  }
+
+  /**
+   * Delete all title streams for this provider
+   * @returns {Promise<number>} Number of deleted streams
+   */
+  async deleteAllStreams() {
+    if (!this.mongoData) {
+      throw new Error('MongoDataService is required');
+    }
+    const deleted = await this.mongoData.deleteProviderTitleStreams(this.providerId);
+    this.logger.info(`Deleted ${deleted} title streams`);
+    return deleted;
+  }
+
+  /**
+   * Delete title streams for specific categories
+   * @param {Array<string>} categoryKeys - Array of category keys (e.g., ["movies-1", "tvshows-5"])
+   * @returns {Promise<number>} Number of deleted streams
+   */
+  async deleteStreamsByCategories(categoryKeys) {
+    if (!this.mongoData) {
+      throw new Error('MongoDataService is required');
+    }
+    if (!categoryKeys || categoryKeys.length === 0) {
+      return 0;
+    }
+    const deleted = await this.mongoData.deleteProviderTitleStreamsByCategories(this.providerId, categoryKeys);
+    this.logger.info(`Deleted ${deleted} title streams for ${categoryKeys.length} category/categories`);
+    return deleted;
+  }
+
+  /**
+   * Delete provider titles for specific categories
+   * @param {Array<string>} categoryKeys - Array of category keys (e.g., ["movies-1", "tvshows-5"])
+   * @returns {Promise<number>} Number of deleted titles
+   */
+  async deleteTitlesByCategories(categoryKeys) {
+    if (!this.mongoData) {
+      throw new Error('MongoDataService is required');
+    }
+    if (!categoryKeys || categoryKeys.length === 0) {
+      return 0;
+    }
+    const deleted = await this.mongoData.deleteProviderTitlesByCategories(this.providerId, categoryKeys);
+    this.logger.info(`Deleted ${deleted} provider titles for ${categoryKeys.length} category/categories`);
+    return deleted;
+  }
+
+  /**
+   * Remove this provider from title sources
+   * @returns {Promise<{titlesUpdated: number, streamsRemoved: number}>}
+   */
+  async removeFromTitleSources() {
+    if (!this.mongoData) {
+      throw new Error('MongoDataService is required');
+    }
+    const result = await this.mongoData.removeProviderFromTitleSources(this.providerId);
+    this.logger.info(`Removed provider from ${result.titlesUpdated} titles, ${result.streamsRemoved} streams removed`);
+    return result;
+  }
+
+  /**
+   * Cleanup provider resources (cache files)
+   * Removes all cache files for this provider from disk
+   * @returns {Promise<void>}
+   */
+  async cleanup() {
+    if (!this.cache) {
+      this.logger.warn('Cache manager not available, skipping cache cleanup');
+      return;
+    }
+    try {
+      await this.cache.removeProviderCache(this.providerId);
+      this.logger.info(`Cleaned up cache files for provider ${this.providerId}`);
+    } catch (error) {
+      this.logger.error(`Error cleaning up cache for provider ${this.providerId}: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete cache policies for this provider
+   * Removes cache policy documents from MongoDB
+   * @returns {Promise<number>} Number of deleted cache policies
+   */
+  async deleteCachePolicies() {
+    if (!this.mongoData) {
+      throw new Error('MongoDataService is required');
+    }
+    const deleted = await this.mongoData.purgeProviderCache(this.providerId);
+    this.logger.info(`Deleted ${deleted} cache policies`);
+    return deleted;
+  }
+
+  /**
+   * Update provider configuration
+   * @param {Object} providerConfig - Provider configuration data
+   * @returns {Promise<void>}
+   */
+  async updateConfiguration(providerConfig) {
+    this.providerData = providerConfig;
+    await this.initializeCachePolicies();
+    this.logger.info(`Updated configuration for provider ${this.providerId}`);
+  }
+
+  /**
+   * Trigger full provider title processing
+   * Fetches categories and metadata for both movies and TV shows
+   * @returns {Promise<void>}
+   */
+  async processProviderTitles() {
+    this.logger.info(`Processing provider titles for ${this.providerId}`);
+    
+    // Fetch categories first
+    await this.fetchCategories('movies').catch(err => {
+      this.logger.warn(`Error fetching movie categories: ${err.message}`);
+    });
+    
+    await this.fetchCategories('tvshows').catch(err => {
+      this.logger.warn(`Error fetching TV show categories: ${err.message}`);
+    });
+    
+    // Fetch metadata
+    await this.fetchMetadata('movies').catch(err => {
+      this.logger.warn(`Error fetching movie metadata: ${err.message}`);
+    });
+    
+    await this.fetchMetadata('tvshows').catch(err => {
+      this.logger.warn(`Error fetching TV show metadata: ${err.message}`);
+    });
+    
+    this.logger.info(`Completed processing provider titles for ${this.providerId}`);
   }
 }
 

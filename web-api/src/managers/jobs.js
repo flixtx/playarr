@@ -19,7 +19,7 @@ class JobsManager extends BaseManager {
 
   /**
    * Get job history from MongoDB
-   * @param {string} jobName - Job name (e.g., "ProcessProvidersTitlesJob")
+   * @param {string} jobName - Job name (e.g., "SyncIPTVProviderTitlesJob")
    * @returns {Promise<Object|null>} Job history document or null if not found
    */
   async _getJobHistory(jobName) {
@@ -35,16 +35,12 @@ class JobsManager extends BaseManager {
 
   /**
    * Map job name from engine format to job history format
-   * Engine uses: processProvidersTitles, processMainTitles, purgeProviderCache
-   * Job history uses: ProcessProvidersTitlesJob, ProcessMainTitlesJob, PurgeProviderCacheJob
    * @param {string} engineJobName - Job name from engine
    * @returns {string} Job name for job_history collection
    */
   _mapJobNameToHistory(engineJobName) {
     const mapping = {
-      'processProvidersTitles': 'ProcessProvidersTitlesJob',
-      'processMainTitles': 'ProcessMainTitlesJob',
-      'purgeProviderCache': 'PurgeProviderCacheJob'
+      'syncIPTVProviderTitles': 'SyncIPTVProviderTitlesJob'
     };
     return mapping[engineJobName] || engineJobName;
   }
@@ -128,9 +124,9 @@ class JobsManager extends BaseManager {
 
   /**
    * Trigger a job via engine API
-   * @param {string} jobName - Job name (e.g., "processProvidersTitles")
+   * @param {string} jobName - Job name (e.g., "syncIPTVProviderTitles")
    * @param {Object} [options] - Optional parameters
-   * @param {string} [options.providerId] - Provider ID to process all titles for (for processMainTitles)
+   * @param {string} [options.providerId] - Provider ID to process all titles for
    * @returns {Promise<{response: object, statusCode: number}>}
    */
   async triggerJob(jobName, options = {}) {

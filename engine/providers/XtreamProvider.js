@@ -341,7 +341,7 @@ export class XtreamProvider extends BaseIPTVProvider {
 
   /**
    * Fetch categories from Xtream provider
-   * Raw API data is cached for 1 hour, enabled status comes from data directory
+   * Raw API data is cached for 1 hour, enabled status comes from provider config
    * @param {string} type - Media type ('movies' or 'tvshows')
    * @returns {Promise<Array<{category_id: number, category_name: string, enabled: boolean}>>} Array of category data
    * @override
@@ -373,10 +373,10 @@ export class XtreamProvider extends BaseIPTVProvider {
 
       this.logger.debug(`${type}: Normalized categories: ${normalizedCategories.length}`);
 
-      // Merge with data directory to get enabled status
+      // Save categories (no enabled field - enabled status is in provider config)
       await this.saveCategories(type, normalizedCategories);
       
-      // Load merged categories with enabled status from MongoDB
+      // Load categories with enabled status from provider config
       const categoriesWithStatus = await this.loadCategories(type);
       
       return categoriesWithStatus;

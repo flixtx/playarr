@@ -1,27 +1,68 @@
 {
   "jobs": [
     {
-      "name": "processProvidersTitles",
-      "jobHistoryName": "ProcessProvidersTitlesJob",
+      "name": "syncIPTVProviderTitles",
+      "jobHistoryName": "SyncIPTVProviderTitlesJob",
       "interval": "1h",
       "timeout": "1s",
       "description": "Fetch metadata from IPTV providers and match TMDB IDs",
-      "schedule": "Every 1 hour",
-      "postExecute": ["processMainTitles"]
+      "schedule": "Every 1 hour"
     },
     {
-      "name": "processMainTitles",
-      "jobHistoryName": "ProcessMainTitlesJob",
-      "description": "Generate main titles from provider titles",
-      "schedule": "Manual trigger only",
-      "skipIfOtherInProgress": ["processProvidersTitles"]
+      "name": "syncIPTVProviderCategories",
+      "jobHistoryName": "SyncIPTVProviderCategoriesJob",
+      "interval": "6h",
+      "timeout": "1s",
+      "description": "Sync IPTV provider categories and auto-disable missing enabled categories",
+      "schedule": "On startup and every 6 hours"
     },
     {
-      "name": "purgeProviderCache",
-      "jobHistoryName": "PurgeProviderCacheJob",
-      "description": "Purge cache for deleted providers",
-      "schedule": "Manual trigger only",
-      "postExecute": ["processMainTitles"]
+      "name": "providerTitlesMonitor",
+      "jobHistoryName": "ProviderTitlesMonitorJob",
+      "interval": "1m",
+      "description": "Monitor provider titles for changes",
+      "schedule": "Every 1 minute"
+    },
+    {
+      "name": "iptvProviderAdded",
+      "jobHistoryName": "IPTVProviderAddedJob",
+      "interval": "1m",
+      "description": "Handle IPTV provider added events",
+      "schedule": "Every 1 minute"
+    },
+    {
+      "name": "iptvProviderDeleted",
+      "jobHistoryName": "IPTVProviderDeletedJob",
+      "interval": "1m",
+      "description": "Handle IPTV provider deleted events",
+      "schedule": "Every 1 minute"
+    },
+    {
+      "name": "iptvProviderDisabled",
+      "jobHistoryName": "IPTVProviderDisabledJob",
+      "interval": "1m",
+      "description": "Handle IPTV provider disabled events",
+      "schedule": "Every 1 minute"
+    },
+    {
+      "name": "iptvProviderEnabled",
+      "jobHistoryName": "IPTVProviderEnabledJob",
+      "interval": "1m",
+      "description": "Handle IPTV provider enabled events",
+      "schedule": "Every 1 minute"
+    },
+    {
+      "name": "iptvProviderCategoriesChanged",
+      "jobHistoryName": "IPTVProviderCategoriesChangedJob",
+      "interval": "1m",
+      "description": "Handle IPTV provider categories enabled state changes",
+      "schedule": "Every 1 minute"
+    },
+    {
+      "name": "settingsMonitor",
+      "jobHistoryName": "SettingsMonitorJob",
+      "description": "Monitor settings for changes",
+      "schedule": "Manual trigger only"
     }
   ]
 }
