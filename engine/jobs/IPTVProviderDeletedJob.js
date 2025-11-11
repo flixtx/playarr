@@ -79,17 +79,19 @@ export class IPTVProviderDeletedJob extends BaseJob {
       // Batch operations: run once after all providers are processed
       if (processedProviderIds.length > 0) {
         try {
-          // 5. Delete all title streams for processed providers (batch operation through TMDBProvider)
-          const deletedStreams = await this.tmdbProvider.deleteTitleStreams(processedProviderIds);
-          this.logger.info(`Deleted ${deletedStreams} title streams for ${processedProviderIds.length} provider(s)`);
+          // 1. Remove providers from title sources and delete title_streams
+          // Returns title_keys for titles that need to be checked
+          const { titlesUpdated, streamsRemoved, titleKeys } = await this.tmdbProvider.removeProvidersFromAllTitleSources(processedProviderIds);
+          this.logger.info(
+            `Removed ${processedProviderIds.length} provider(s) from ${titlesUpdated} titles, ` +
+            `${streamsRemoved} streams removed`
+          );
 
-          // 6. Remove all processed providers from title sources (batch operation through TMDBProvider)
-          const { titlesUpdated, streamsRemoved } = await this.tmdbProvider.removeProvidersFromTitleSources(processedProviderIds);
-          this.logger.info(`Removed ${processedProviderIds.length} provider(s) from ${titlesUpdated} titles, ${streamsRemoved} streams removed`);
-
-          // 7. Delete titles without sources (batch operation through TMDBProvider)
-          const deletedTitlesWithoutSources = await this.tmdbProvider.deleteTitlesWithoutSources(processedProviderIds);
-          this.logger.info(`Deleted ${deletedTitlesWithoutSources} titles without sources`);
+          // 2. Delete titles that have no streams left in title_streams collection
+          if (titleKeys.length > 0) {
+            const deletedTitles = await this.tmdbProvider.deleteTitlesWithoutStreams(titleKeys);
+            this.logger.info(`Deleted ${deletedTitles} titles without streams`);
+          }
         } catch (error) {
           this.logger.error(`Error in batch operations: ${error.message}`);
           // Don't fail the entire job, but log the error
