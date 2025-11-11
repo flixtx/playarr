@@ -96,7 +96,11 @@ export class IPTVProviderCategoriesChangedJob extends BaseJob {
             });
           }
 
-          // 5. Trigger process provider titles using provider instance
+          // 5. Reset lastUpdated for all remaining provider titles to ensure they're reprocessed
+          const titlesUpdated = await providerInstance.resetTitlesLastUpdated();
+          this.logger.info(`Reset lastUpdated for ${titlesUpdated} provider titles for ${providerId}`);
+
+          // 6. Trigger process provider titles using provider instance
           await providerInstance.processProviderTitles();
 
           processed++;
