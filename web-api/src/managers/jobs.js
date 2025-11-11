@@ -19,7 +19,7 @@ class JobsManager extends BaseManager {
 
   /**
    * Get job history from MongoDB
-   * @param {string} jobName - Job name (e.g., "ProcessProvidersTitlesJob")
+   * @param {string} jobName - Job name (e.g., "SyncIPTVProviderTitlesJob")
    * @returns {Promise<Object|null>} Job history document or null if not found
    */
   async _getJobHistory(jobName) {
@@ -33,21 +33,6 @@ class JobsManager extends BaseManager {
     }
   }
 
-  /**
-   * Map job name from engine format to job history format
-   * Engine uses: processProvidersTitles, processMainTitles, purgeProviderCache
-   * Job history uses: ProcessProvidersTitlesJob, ProcessMainTitlesJob, PurgeProviderCacheJob
-   * @param {string} engineJobName - Job name from engine
-   * @returns {string} Job name for job_history collection
-   */
-  _mapJobNameToHistory(engineJobName) {
-    const mapping = {
-      'processProvidersTitles': 'ProcessProvidersTitlesJob',
-      'processMainTitles': 'ProcessMainTitlesJob',
-      'purgeProviderCache': 'PurgeProviderCacheJob'
-    };
-    return mapping[engineJobName] || engineJobName;
-  }
 
   /**
    * Format job data for UI
@@ -56,8 +41,6 @@ class JobsManager extends BaseManager {
    * @returns {Object} Formatted job data
    */
   _formatJobData(engineJob, jobHistory) {
-    const historyJobName = this._mapJobNameToHistory(engineJob.name);
-    
     return {
       name: engineJob.name,
       description: engineJob.description,
@@ -104,8 +87,7 @@ class JobsManager extends BaseManager {
       // Get job history for each job from MongoDB
       const jobsWithHistory = await Promise.all(
         engineJobs.map(async (engineJob) => {
-          const historyJobName = this._mapJobNameToHistory(engineJob.name);
-          const jobHistory = await this._getJobHistory(historyJobName);
+          const jobHistory = await this._getJobHistory(engineJob.jobHistoryName);
           return this._formatJobData(engineJob, jobHistory);
         })
       );
@@ -128,9 +110,9 @@ class JobsManager extends BaseManager {
 
   /**
    * Trigger a job via engine API
-   * @param {string} jobName - Job name (e.g., "processProvidersTitles")
+   * @param {string} jobName - Job name (e.g., "syncIPTVProviderTitles")
    * @param {Object} [options] - Optional parameters
-   * @param {string} [options.providerId] - Provider ID to process all titles for (for processMainTitles)
+   * @param {string} [options.providerId] - Provider ID to process all titles for
    * @returns {Promise<{response: object, statusCode: number}>}
    */
   async triggerJob(jobName, options = {}) {

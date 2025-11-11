@@ -2,11 +2,11 @@ import { BaseJob } from './BaseJob.js';
 
 /**
  * Job for processing provider titles (fetching metadata from IPTV providers)
- * Handles fetching categories and metadata from all configured IPTV providers,
+ * Handles fetching metadata from all configured IPTV providers,
  * and matching TMDB IDs for provider titles
  * @extends {BaseJob}
  */
-export class ProcessProvidersTitlesJob extends BaseJob {
+export class SyncIPTVProviderTitlesJob extends BaseJob {
   /**
    * @param {import('../managers/StorageManager.js').StorageManager} cache - Storage manager instance for temporary cache
    * @param {import('../services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service instance
@@ -14,32 +14,27 @@ export class ProcessProvidersTitlesJob extends BaseJob {
    * @param {import('../providers/TMDBProvider.js').TMDBProvider} tmdbProvider - TMDB provider singleton instance
    */
   constructor(cache, mongoData, providers, tmdbProvider) {
-    super('ProcessProvidersTitlesJob', cache, mongoData, providers, tmdbProvider);
+    super('SyncIPTVProviderTitlesJob', cache, mongoData, providers, tmdbProvider);
   }
 
   /**
-   * Execute the job - fetch categories and metadata from all IPTV providers (incremental)
+   * Execute the job - fetch metadata from all IPTV providers (incremental)
    * @returns {Promise<Array<{providerId: string, providerName: string, movies?: number, tvShows?: number, error?: string}>>} Array of fetch results
    */
   async execute() {
     this._validateDependencies();
 
-    const jobName = 'ProcessProvidersTitlesJob';
-    let lastExecution = null;
-
     try {
       // Get last execution time from job history BEFORE setting status
       // This ensures we have the correct last_execution value from previous successful run
-      const jobHistory = await this.mongoData.getJobHistory(jobName);
-      if (jobHistory && jobHistory.last_execution) {
-        lastExecution = new Date(jobHistory.last_execution);
-        this.logger.info(`Last execution: ${lastExecution.toISOString()}. Processing incremental update.`);
-      } else {
-        this.logger.info('No previous execution found. Processing full update.');
-      }
+      const lastExecution = await this.getLastExecution({
+        fallbackDate: null,
+        logMessage: 'Last execution: {date}. Processing incremental update.',
+        noExecutionMessage: 'No previous execution found. Processing full update.'
+      });
 
       // Set status to "running" at start (after reading last_execution)
-      await this.mongoData.updateJobStatus(jobName, 'running');
+      await this.setJobStatus('running');
 
       // Load provider titles incrementally (only updated since last execution)
       // Include ignored titles for proper comparison and filtering
@@ -51,28 +46,21 @@ export class ProcessProvidersTitlesJob extends BaseJob {
         }
       }
 
-      // Fetch categories from all providers first
-      await this.fetchAllCategories();
-
-      // Then fetch metadata from all providers
+      // Fetch metadata from all providers
       const results = await this.fetchAllMetadata();
 
-      // Update job history
-      await this.mongoData.updateJobHistory(jobName, {
+      // Set status to completed on success with result
+      await this.setJobStatus('completed', {
         providers_processed: this.providers.size,
         results: results
       });
-
-      // Set status to completed on success
-      await this.mongoData.updateJobStatus(jobName, 'completed');
 
       return results;
     } catch (error) {
       this.logger.error(`Job execution failed: ${error.message}`);
       
-      await this.mongoData.updateJobStatus(jobName, 'failed');
-      // Update job history with error
-      await this.mongoData.updateJobHistory(jobName, {
+      // Set status to failed with error result
+      await this.setJobStatus('failed', {
         error: error.message
       }).catch(err => {
         this.logger.error(`Failed to update job history: ${err.message}`);
@@ -91,44 +79,6 @@ export class ProcessProvidersTitlesJob extends BaseJob {
         this.logger.error(`Error during memory cleanup: ${error.message}`);
       }
     }
-  }
-
-  /**
-   * Fetch categories from a provider instance
-   * @param {import('../providers/BaseIPTVProvider.js').BaseIPTVProvider} providerInstance - Provider instance
-   * @param {string} providerId - Provider ID
-   * @returns {Promise<{movieCats: Array, tvShowCats: Array}>} Categories for movies and TV shows
-   */
-  async fetchCategoriesFromProvider(providerInstance, providerId) {
-    try {
-      this.logger.debug(`Fetching categories from provider ${providerId}...`);
-      const [movieCats, tvShowCats] = await Promise.all([
-        providerInstance.fetchCategories('movies').catch(() => []),
-        providerInstance.fetchCategories('tvshows').catch(() => [])
-      ]);
-      this.logger.info(`Found ${movieCats.length} movie categories, ${tvShowCats.length} TV show categories`);
-      return { movieCats, tvShowCats };
-    } catch (error) {
-      this.logger.error(`Error fetching categories from ${providerId}: ${error.message}`);
-      return { movieCats: [], tvShowCats: [] };
-    }
-  }
-
-  /**
-   * Fetch categories from all providers
-   * Processes all providers in parallel for better performance
-   * @returns {Promise<void>}
-   */
-  async fetchAllCategories() {
-    this.logger.info(`Fetching categories from ${this.providers.size} provider(s)...`);
-    
-    // Process all providers in parallel
-    const categoryPromises = Array.from(this.providers.entries()).map(
-      ([providerId, providerInstance]) => 
-        this.fetchCategoriesFromProvider(providerInstance, providerId)
-    );
-    
-    await Promise.all(categoryPromises);
   }
 
   /**

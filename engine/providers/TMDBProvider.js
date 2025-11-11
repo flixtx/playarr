@@ -22,7 +22,10 @@ export class TMDBProvider extends BaseProvider {
       const providerData = {
         id: 'tmdb',
         type: 'tmdb',
-        api_rate: settings.tmdb_api_rate,
+        api_rate: {
+          concurrent: 45,
+          duration_seconds: 1
+        },
         token: settings.tmdb_token || '' // Allow empty token
       };
 
@@ -1285,6 +1288,97 @@ export class TMDBProvider extends BaseProvider {
       });
     } catch (error) {
       this.logger.error(`Error building TV show streams for ID ${tmdbId}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Remove providers from title sources (batch operation)
+   * Removes specified provider IDs from all title sources in the main titles collection
+   * @param {Array<string>} providerIds - Array of provider IDs to remove
+   * @returns {Promise<{titlesUpdated: number, streamsRemoved: number}>}
+   */
+  async removeProvidersFromTitleSources(providerIds) {
+    if (!providerIds || providerIds.length === 0) {
+      return { titlesUpdated: 0, streamsRemoved: 0 };
+    }
+    return await this.mongoData.removeProvidersFromTitleSources(providerIds);
+  }
+
+  /**
+   * Delete title streams for providers (batch operation)
+   * Deletes streams from title_streams collection for specified providers
+   * @param {Array<string>} providerIds - Array of provider IDs
+   * @returns {Promise<number>} Number of deleted streams
+   */
+  async deleteTitleStreams(providerIds) {
+    if (!providerIds || providerIds.length === 0) {
+      return 0;
+    }
+    return await this.mongoData.deleteTitleStreams(providerIds);
+  }
+
+  /**
+   * Delete title streams for specific categories (batch operation)
+   * @param {Array<string>} providerIds - Array of provider IDs
+   * @param {Array<string>} categoryKeys - Array of category keys
+   * @returns {Promise<number>} Number of deleted streams
+   */
+  async deleteTitleStreamsByCategories(providerIds, categoryKeys) {
+    if (!providerIds || providerIds.length === 0 || !categoryKeys || categoryKeys.length === 0) {
+      return 0;
+    }
+    return await this.mongoData.deleteTitleStreamsByCategories(providerIds, categoryKeys);
+  }
+
+  /**
+   * Delete titles without sources
+   * Removes main titles that have no provider sources left
+   * @param {Array<string>} [affectedProviderIds] - Optional: provider IDs that were processed (for query optimization)
+   * @returns {Promise<number>} Number of deleted titles
+   */
+  async deleteTitlesWithoutSources(affectedProviderIds = null) {
+    if (affectedProviderIds && affectedProviderIds.length > 0) {
+      // Optimize: only check titles that had streams from these providers
+      const affectedTitleKeys = await this.mongoData.db.collection('title_streams')
+        .distinct('title_key', { provider_id: { $in: affectedProviderIds } });
+      
+      if (affectedTitleKeys.length === 0) {
+        return 0;
+      }
+      
+      const titles = await this.mongoData.db.collection('titles')
+        .find({ title_key: { $in: affectedTitleKeys } })
+        .toArray();
+      
+      const titlesToDelete = [];
+      for (const title of titles) {
+        const streams = title.streams || {};
+        let hasSources = false;
+        
+        for (const streamValue of Object.values(streams)) {
+          if (streamValue && typeof streamValue === 'object' && Array.isArray(streamValue.sources)) {
+            if (streamValue.sources.length > 0) {
+              hasSources = true;
+              break;
+            }
+          }
+        }
+        
+        if (!hasSources) {
+          titlesToDelete.push(title.title_key);
+        }
+      }
+      
+      if (titlesToDelete.length === 0) {
+        return 0;
+      }
+      
+      const result = await this.mongoData.db.collection('titles')
+        .deleteMany({ title_key: { $in: titlesToDelete } });
+      return result.deletedCount || 0;
+    } else {
+      // Fallback to checking all titles
+      return await this.mongoData.deleteTitlesWithoutSources();
     }
   }
 }

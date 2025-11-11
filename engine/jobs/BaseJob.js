@@ -48,12 +48,68 @@ export class BaseJob {
     if (!this.mongoData) {
       throw new Error('MongoDB data service is required');
     }
-    if (!this.providers || this.providers.size === 0) {
-      throw new Error('At least one IPTV provider is required');
-    }
     if (!this.tmdbProvider) {
       throw new Error('TMDB provider is required');
     }
+  }
+
+  /**
+   * Get provider configuration from MongoDB
+   * @param {string} providerId - Provider ID
+   * @returns {Promise<Object|null>} Provider configuration document or null if not found
+   */
+  async getProviderConfig(providerId) {
+    try {
+      const providerConfig = await this.mongoData.db.collection('iptv_providers')
+        .findOne({ id: providerId, deleted: { $ne: true } });
+      return providerConfig;
+    } catch (error) {
+      this.logger.error(`Error getting provider config for ${providerId}: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Get last execution time from job history
+   * @param {Object} [options] - Options for getting last execution
+   * @param {Date|null} [options.fallbackDate] - Fallback date if no execution found (null means no fallback)
+   * @param {string} [options.logMessage] - Log message template with {date} placeholder
+   * @param {string} [options.noExecutionMessage] - Message to log when no execution found
+   * @returns {Promise<Date|null>} Last execution date or fallback date or null
+   */
+  async getLastExecution(options = {}) {
+    const { fallbackDate = null, logMessage, noExecutionMessage } = options;
+    
+    try {
+      const jobHistory = await this.mongoData.getJobHistory(this.jobName);
+      if (jobHistory && jobHistory.last_execution) {
+        const lastExecution = new Date(jobHistory.last_execution);
+        if (logMessage) {
+          this.logger.info(logMessage.replace('{date}', lastExecution.toISOString()));
+        }
+        return lastExecution;
+      } else {
+        if (noExecutionMessage) {
+          this.logger.info(noExecutionMessage);
+        }
+        return fallbackDate;
+      }
+    } catch (error) {
+      this.logger.error(`Error getting last execution: ${error.message}`);
+      return fallbackDate;
+    }
+  }
+
+  /**
+   * Update job status in MongoDB
+   * If result is provided, also updates job history in the same operation
+   * @param {string} status - Job status: "running" | "cancelled" | "completed" | "failed"
+   * @param {Object|null} [result=null] - Optional execution result object (if provided, updates both status and history)
+   * @param {string} [providerId=null] - Optional provider ID for provider-specific jobs
+   * @returns {Promise<void>}
+   */
+  async setJobStatus(status, result = null, providerId = null) {
+    await this.mongoData.updateJobStatus(this.jobName, status, providerId, result);
   }
 }
 

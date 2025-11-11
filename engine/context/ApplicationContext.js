@@ -14,6 +14,12 @@ import { MongoDataService } from '../services/MongoDataService.js';
  */
 export class ApplicationContext {
   static instance = null;
+  
+  /**
+   * Provider action queue: Map of job name to Set of provider IDs
+   * @type {Map<string, Set<string>>}
+   */
+  _providerActionQueue = new Map();
 
   /**
    * Get the singleton instance
@@ -90,14 +96,14 @@ export class ApplicationContext {
     );
     logger.debug('✓ TMDB provider initialized');
 
-    // 5. Load and initialize IPTV providers
+    // 5. Load and initialize IPTV providers (all non-deleted providers)
     context.providers = new Map();
     const providerConfigs = await BaseProvider.loadProviders(context.mongoData);
-    logger.debug(`Found ${providerConfigs.length} enabled provider(s)`);
+    logger.debug(`Found ${providerConfigs.length} provider(s)`);
 
     for (const providerData of providerConfigs) {
       try {
-        const instance = context._createProviderInstance(providerData);
+        const instance = context.createProviderInstance(providerData);
         
         // Initialize cache policies for this provider
         await instance.initializeCachePolicies();
@@ -112,6 +118,9 @@ export class ApplicationContext {
     if (context.providers.size === 0) {
       logger.warn('No providers were successfully loaded');
     }
+
+    // Initialize provider action queue
+    context._providerActionQueue = new Map();
 
     logger.debug('Application context initialization completed');
     return context;
@@ -181,12 +190,34 @@ export class ApplicationContext {
   }
 
   /**
+   * Add provider to action queue for a specific job
+   * @param {string} jobName - Name of the job
+   * @param {string} providerId - Provider ID to add
+   */
+  addProviderToActionQueue(jobName, providerId) {
+    if (!this._providerActionQueue.has(jobName)) {
+      this._providerActionQueue.set(jobName, new Set());
+    }
+    this._providerActionQueue.get(jobName).add(providerId);
+  }
+
+  /**
+   * Get and clear providers for a specific job
+   * @param {string} jobName - Name of the job
+   * @returns {Set<string>} Set of provider IDs
+   */
+  getAndClearProviderActionQueue(jobName) {
+    const providers = this._providerActionQueue.get(jobName) || new Set();
+    this._providerActionQueue.set(jobName, new Set()); // Clear after getting
+    return providers;
+  }
+
+  /**
    * Create a provider instance based on type
-   * @private
    * @param {Object} providerData - Provider configuration data
    * @returns {import('../providers/BaseIPTVProvider.js').BaseIPTVProvider} Provider instance (AGTVProvider or XtreamProvider)
    */
-  _createProviderInstance(providerData) {
+  createProviderInstance(providerData) {
     if (providerData.type === 'agtv') {
       return new AGTVProvider(
         providerData,

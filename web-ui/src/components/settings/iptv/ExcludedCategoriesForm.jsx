@@ -13,14 +13,21 @@ import {
   TextField,
   InputAdornment,
   IconButton,
+  Button,
+  Alert,
+  Snackbar,
 } from '@mui/material';
-import { Search as SearchIcon, Clear as ClearIcon } from '@mui/icons-material';
-import { updateIPTVProviderCategory } from './utils';
+import { Search as SearchIcon, Clear as ClearIcon, Save as SaveIcon } from '@mui/icons-material';
+import axiosInstance from '../../../config/axios';
+import { API_ENDPOINTS } from '../../../config/api';
 
 function ExcludedCategoriesForm({ provider, categoryType, categories, loading, onCategoryUpdate }) {
   const [error, setError] = useState(null);
   const [localCategories, setLocalCategories] = useState(categories || []);
   const [searchQuery, setSearchQuery] = useState('');
+  const [pendingChanges, setPendingChanges] = useState({}); // { [categoryKey]: enabled }
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   // Filter categories by type and search query
   const filteredCategories = useMemo(() => {
@@ -40,40 +47,97 @@ function ExcludedCategoriesForm({ provider, categoryType, categories, loading, o
   // Update local state when categories prop changes
   React.useEffect(() => {
     setLocalCategories(categories || []);
+    setPendingChanges({}); // Clear pending changes when categories change
   }, [categories]);
 
-  const handleToggleEnabled = async (categoryKey, currentEnabled) => {
-    try {
-      // Optimistically update the UI
-      setLocalCategories(prev =>
-        prev.map(cat =>
-          cat.key === categoryKey
-            ? { ...cat, enabled: !currentEnabled }
-            : cat
-        )
-      );
+  const handleToggleEnabled = (categoryKey, currentEnabled) => {
+    // Update local state immediately for UI feedback
+    setLocalCategories(prev =>
+      prev.map(cat =>
+        cat.key === categoryKey
+          ? { ...cat, enabled: !currentEnabled }
+          : cat
+      )
+    );
 
-      // Make API call
-      await updateIPTVProviderCategory(provider.id, categoryKey, {
-        enabled: !currentEnabled,
-        type: categoryType
+    // Track pending change
+    setPendingChanges(prev => ({
+      ...prev,
+      [categoryKey]: !currentEnabled
+    }));
+
+    setError(null);
+  };
+
+  const handleSave = async () => {
+    if (Object.keys(pendingChanges).length === 0) {
+      return; // No changes to save
+    }
+
+    setIsSaving(true);
+    setError(null);
+
+    try {
+      // Get all categories for this provider (categories prop should contain all)
+      // Start with original categories and apply pending changes
+      const allCategories = categories || [];
+      
+      // Build enabled categories object
+      const enabledCategories = {
+        movies: [],
+        tvshows: []
+      };
+
+      // Process all categories and apply pending changes
+      allCategories.forEach(cat => {
+        const categoryKey = cat.key;
+        const type = cat.type;
+        
+        if (!type || (type !== 'movies' && type !== 'tvshows')) {
+          return; // Skip invalid types
+        }
+        
+        // Determine if category should be enabled
+        // If there's a pending change, use that; otherwise use current enabled status
+        const shouldBeEnabled = pendingChanges.hasOwnProperty(categoryKey)
+          ? pendingChanges[categoryKey]
+          : cat.enabled;
+
+        if (shouldBeEnabled) {
+          enabledCategories[type].push(categoryKey);
+        }
       });
 
-      // No need to refresh all categories
-      setError(null);
-    } catch (err) {
-      // Revert the optimistic update on error
-      setLocalCategories(prev =>
-        prev.map(cat =>
-          cat.key === categoryKey
-            ? { ...cat, enabled: currentEnabled }
-            : cat
-        )
+      // Make batch update API call
+      const response = await axiosInstance.post(
+        `${API_ENDPOINTS.providerCategories(provider.id)}/batch`,
+        enabledCategories
       );
-      console.error('Error updating category:', err);
-      setError('Failed to update category status');
+
+      if (response.data.success) {
+        setPendingChanges({});
+        setSaveSuccess(true);
+        
+        // Notify parent component to refresh categories
+        if (onCategoryUpdate) {
+          onCategoryUpdate();
+        }
+      } else {
+        throw new Error(response.data.error || 'Failed to save categories');
+      }
+    } catch (err) {
+      console.error('Error saving categories:', err);
+      setError(err.response?.data?.error || 'Failed to save categories');
+      
+      // Revert local changes on error
+      setLocalCategories(categories || []);
+      setPendingChanges({});
+    } finally {
+      setIsSaving(false);
     }
   };
+
+  const hasPendingChanges = Object.keys(pendingChanges).length > 0;
 
   if (loading) {
     return (
@@ -141,12 +205,33 @@ function ExcludedCategoriesForm({ provider, categoryType, categories, loading, o
 
   return (
     <Box>
+      <Snackbar
+        open={saveSuccess}
+        autoHideDuration={3000}
+        onClose={() => setSaveSuccess(false)}
+        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setSaveSuccess(false)} severity="success" sx={{ width: '100%' }}>
+          Categories saved successfully
+        </Alert>
+      </Snackbar>
+
       <Grid container spacing={2}>
         <Grid item xs={12}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
             <Typography variant="subtitle2">
               Categories
             </Typography>
+            <Button
+              variant="contained"
+              color="primary"
+              startIcon={<SaveIcon />}
+              onClick={handleSave}
+              disabled={!hasPendingChanges || isSaving || loading}
+              size="small"
+            >
+              {isSaving ? 'Saving...' : 'Save Changes'}
+            </Button>
           </Box>
           
           {/* Search Filter */}

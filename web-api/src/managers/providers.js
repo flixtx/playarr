@@ -257,9 +257,28 @@ class ProvidersManager extends BaseManager {
         providerData.priority = maxPriority + 1;
       }
 
+      // Set default api_rate based on provider type
+      if (!providerData.api_rate) {
+        const providerType = providerData.type.toLowerCase();
+        if (providerType === 'agtv') {
+          providerData.api_rate = {
+            concurrent: 10,
+            duration_seconds: 1
+          };
+        } else if (providerType === 'xtream') {
+          providerData.api_rate = {
+            concurrent: 4,
+            duration_seconds: 1
+          };
+        }
+      }
+
       // Add provider to array and save
       providers.push(providerData);
       await this._writeAllProviders(providers);
+
+      // Trigger engine action for provider added
+      await this._triggerEngineProviderAction(providerData.id, 'added');
 
       // Broadcast WebSocket event
       this._webSocketService.broadcastEvent('provider_changed', {
@@ -300,34 +319,10 @@ class ProvidersManager extends BaseManager {
 
       const existingProvider = providers[providerIndex];
 
-      // Check if provider is being disabled
+      // Check if provider is being enabled/disabled
       const wasEnabled = existingProvider.enabled !== false;
       const willBeEnabled = providerData.enabled !== false;
-
-      // If provider is being disabled, perform cleanup operations
-      if (wasEnabled && !willBeEnabled) {
-        try {
-          // Remove provider from titles.streams and main-titles-streams
-          await this._database.removeProviderFromTitles(providerId);
-          
-          // Delete all title_streams for this provider
-          await this._database.deleteProviderTitleStreams(providerId);
-          
-          // Do NOT delete provider_titles (only on delete, not disable)
-        } catch (error) {
-          // Log error but don't fail the provider update
-          this.logger.error(`Error cleaning up provider ${providerId}: ${error.message}`);
-        }
-
-        // Trigger processMainTitles with providerId when provider is disabled
-        try {
-          this.logger.info(`Provider ${providerId} disabled. Triggering processMainTitles for provider ${providerId}...`);
-          await this._jobsManager.triggerJob('processMainTitles', { providerId });
-        } catch (error) {
-          this.logger.error(`Failed to trigger processMainTitles: ${error.message}`);
-          // Don't fail the provider update if triggering fails
-        }
-      }
+      const enabledChanged = wasEnabled !== willBeEnabled;
 
       // Normalize URLs
       this._normalizeUrls(providerData, existingProvider);
@@ -341,9 +336,31 @@ class ProvidersManager extends BaseManager {
         lastUpdated: now // Update timestamp
       };
 
+      // Set default api_rate if missing (backward compatibility)
+      if (!updatedProvider.api_rate) {
+        const providerType = updatedProvider.type?.toLowerCase();
+        if (providerType === 'agtv') {
+          updatedProvider.api_rate = {
+            concurrent: 10,
+            duration_seconds: 1
+          };
+        } else if (providerType === 'xtream') {
+          updatedProvider.api_rate = {
+            concurrent: 4,
+            duration_seconds: 1
+          };
+        }
+      }
+
       // Update in array and save
       providers[providerIndex] = updatedProvider;
       await this._writeAllProviders(providers);
+
+      // Trigger engine action based on changes
+      if (enabledChanged) {
+        const action = willBeEnabled ? 'enabled' : 'disabled';
+        await this._triggerEngineProviderAction(providerId, action);
+      }
 
       // Broadcast WebSocket event
       this._webSocketService.broadcastEvent('provider_changed', {
@@ -407,21 +424,14 @@ class ProvidersManager extends BaseManager {
       
       await this._writeAllProviders(providers);
 
+      // Trigger engine action for provider deleted
+      await this._triggerEngineProviderAction(providerId, 'deleted');
+
       // Broadcast WebSocket event
       this._webSocketService.broadcastEvent('provider_changed', {
         provider_id: providerId,
         action: 'deleted'
       });
-
-      // Trigger purgeProviderCache with providerId
-      // The postExecute will automatically trigger processMainTitles
-      try {
-        this.logger.info(`Provider ${providerId} deleted. Triggering purgeProviderCache (provider: ${providerId})...`);
-        await this._jobsManager.triggerJob('purgeProviderCache', { providerId });
-      } catch (error) {
-        this.logger.error(`Failed to trigger purgeProviderCache after provider deletion: ${error.message}`);
-        // Don't fail the provider deletion if triggering fails
-      }
 
       return {
         response: {},
@@ -491,6 +501,28 @@ class ProvidersManager extends BaseManager {
         response: { error: 'Failed to update provider priorities' },
         statusCode: 500,
       };
+    }
+  }
+
+  /**
+   * Trigger engine provider action
+   * @private
+   * @param {string} providerId - Provider ID
+   * @param {string} action - Action type: 'added' | 'deleted' | 'enabled' | 'disabled' | 'categories-changed'
+   */
+  async _triggerEngineProviderAction(providerId, action) {
+    try {
+      const axios = (await import('axios')).default;
+      const engineApiUrl = 'http://127.0.0.1:3002';
+      await axios.post(
+        `${engineApiUrl}/api/providers/${providerId}/action`,
+        { action },
+        { timeout: 5000 }
+      );
+      this.logger.info(`Triggered engine action '${action}' for provider ${providerId}`);
+    } catch (error) {
+      this.logger.error(`Failed to trigger engine action for provider ${providerId}: ${error.message}`);
+      // Don't throw - provider operation should succeed even if engine notification fails
     }
   }
 }
