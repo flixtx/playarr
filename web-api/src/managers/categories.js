@@ -1,5 +1,5 @@
 import { BaseManager } from './BaseManager.js';
-import { DatabaseCollections, toCollectionName, getCollectionKey } from '../config/collections.js';
+import { DatabaseCollections, toCollectionName } from '../config/collections.js';
 
 /**
  * Categories manager for handling IPTV provider categories

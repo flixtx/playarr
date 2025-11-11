@@ -1,5 +1,4 @@
 import { BaseManager } from './BaseManager.js';
-import path from 'path';
 import { DatabaseCollections, toCollectionName } from '../config/collections.js';
 
 /**

@@ -3,7 +3,6 @@ import { DatabaseCollections, DataProvider } from '../config/collections.js';
 import { toCollectionName } from '../config/collections.js';
 import slugify from 'slugify';
 import dotenv from 'dotenv';
-import { JobsManager } from './jobs.js';
 
 dotenv.config();
 
@@ -16,13 +15,11 @@ class ProvidersManager extends BaseManager {
    * @param {import('../services/database.js').DatabaseService} database - Database service instance
    * @param {import('../services/websocket.js').WebSocketService} webSocketService - WebSocket service instance
    * @param {import('./titles.js').TitlesManager} titlesManager - Titles manager instance
-   * @param {import('./jobs.js').JobsManager} jobsManager - Jobs manager instance
    */
-  constructor(database, webSocketService, titlesManager, jobsManager) {
+  constructor(database, webSocketService, titlesManager) {
     super('ProvidersManager', database);
     this._webSocketService = webSocketService;
     this._titlesManager = titlesManager;
-    this._jobsManager = jobsManager;
     this._providersCollection = toCollectionName(DatabaseCollections.IPTV_PROVIDERS);
   }
 

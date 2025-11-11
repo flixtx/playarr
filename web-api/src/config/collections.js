@@ -1,5 +1,3 @@
-import slugify from 'slugify';
-
 /**
  * Database collection types matching Python DatabaseCollections enum
  */

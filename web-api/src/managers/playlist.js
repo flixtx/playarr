@@ -1,17 +1,6 @@
 import { BaseManager } from './BaseManager.js';
 
 /**
- * M3U8 parameters that should be included in playlist entries
- * Matches Python's M3U8_PARAMETERS
- */
-const M3U8_PARAMETERS = [
-  'tvg-id',
-  'tvg-name',
-  'tvg-logo',
-  'group-title',
-];
-
-/**
  * Playlist manager for handling M3U8 playlist generation
  * Matches Python's PlaylistService
  */

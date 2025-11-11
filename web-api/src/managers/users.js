@@ -2,7 +2,6 @@ import { BaseManager } from './BaseManager.js';
 import { DatabaseCollections, toCollectionName } from '../config/collections.js';
 import { hashPassword, verifyPassword } from '../utils/password.js';
 import { createJWTToken } from '../utils/jwt.js';
-import crypto from 'crypto';
 
 /**
  * User manager for handling user operations

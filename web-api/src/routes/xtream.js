@@ -507,7 +507,7 @@ class XtreamRouter extends BaseRouter {
       const { password_hash, _id, ...userPublic } = user;
       return userPublic;
     } catch (error) {
-      logger.error('Authentication error:', error);
+      this.logger.error('Authentication error:', error);
       return null;
     }
   }

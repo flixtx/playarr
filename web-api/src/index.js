@@ -133,7 +133,7 @@ async function initialize() {
     const settingsManager = new SettingsManager(database);
     const statsManager = new StatsManager(database);
     const jobsManager = new JobsManager(database);
-    const providersManager = new ProvidersManager(database, webSocketService, titlesManager, jobsManager);
+    const providersManager = new ProvidersManager(database, webSocketService, titlesManager);
     const categoriesManager = new CategoriesManager(database, providersManager);
     const streamManager = new StreamManager(database);
     const playlistManager = new PlaylistManager(database);
