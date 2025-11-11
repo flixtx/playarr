@@ -1163,6 +1163,121 @@ export class MongoDataService {
   }
 
   /**
+   * Remove provider from all title sources (when provider is disabled)
+   * More efficient: queries title_streams first, then removes provider from titles.streams
+   * @param {Array<string>} providerIds - Array of provider IDs to remove
+   * @returns {Promise<{titlesUpdated: number, streamsRemoved: number, titleKeys: Array<string>}>}
+   */
+  async removeProvidersFromAllTitleSources(providerIds) {
+    try {
+      if (!providerIds || providerIds.length === 0) {
+        return { titlesUpdated: 0, streamsRemoved: 0, titleKeys: [] };
+      }
+
+      // 1. Get all title_keys from title_streams for these providers (before deleting)
+      const streams = await this.db.collection('title_streams')
+        .find({ provider_id: { $in: providerIds } })
+        .toArray();
+
+      if (streams.length === 0) {
+        return { titlesUpdated: 0, streamsRemoved: 0, titleKeys: [] };
+      }
+
+      // 2. Extract unique title_key values (tmdb-based)
+      const titleKeys = [...new Set(streams.map(s => s.title_key))];
+
+      // 3. Delete all title_streams for these providers
+      const deletedStreams = await this.db.collection('title_streams')
+        .deleteMany({ provider_id: { $in: providerIds } });
+
+      // 4. Check which title_keys still have streams (from other providers)
+      const titleKeysWithStreams = await this.db.collection('title_streams')
+        .distinct('title_key', { title_key: { $in: titleKeys } });
+
+      const titleKeysWithStreamsSet = new Set(titleKeysWithStreams);
+      const titleKeysToClean = titleKeys.filter(key => titleKeysWithStreamsSet.has(key));
+
+      // 5. Remove provider from titles.streams for titles that still have streams
+      const providerIdSet = new Set(providerIds);
+      let titlesUpdated = 0;
+      let streamsRemoved = 0;
+      const bulkOps = [];
+
+      if (titleKeysToClean.length > 0) {
+        const titles = await this.db.collection('titles')
+          .find({ title_key: { $in: titleKeysToClean } })
+          .toArray();
+
+        for (const title of titles) {
+          const streamsObj = title.streams || {};
+          let titleModified = false;
+          const updatedStreams = { ...streamsObj };
+
+          for (const [streamKey, streamValue] of Object.entries(streamsObj)) {
+            if (streamValue && typeof streamValue === 'object' && Array.isArray(streamValue.sources)) {
+              const originalLength = streamValue.sources.length;
+              const filteredSources = streamValue.sources.filter(id => !providerIdSet.has(id));
+
+              if (filteredSources.length !== originalLength) {
+                if (filteredSources.length > 0) {
+                  updatedStreams[streamKey] = {
+                    ...streamValue,
+                    sources: filteredSources
+                  };
+                } else {
+                  updatedStreams[streamKey] = undefined;
+                }
+                streamsRemoved += (originalLength - filteredSources.length);
+                titleModified = true;
+              }
+            }
+          }
+
+          // Remove undefined entries
+          for (const key in updatedStreams) {
+            if (updatedStreams[key] === undefined) {
+              delete updatedStreams[key];
+            }
+          }
+
+          if (titleModified) {
+            titlesUpdated++;
+            bulkOps.push({
+              updateOne: {
+                filter: { title_key: title.title_key },
+                update: {
+                  $set: {
+                    streams: updatedStreams,
+                    lastUpdated: new Date()
+                  }
+                }
+              }
+            });
+          }
+        }
+
+        // Execute bulk update
+        if (bulkOps.length > 0) {
+          const collection = this.db.collection('titles');
+          for (let i = 0; i < bulkOps.length; i += this.batchSize) {
+            const batch = bulkOps.slice(i, i + this.batchSize);
+            await collection.bulkWrite(batch, { ordered: false });
+          }
+        }
+      }
+
+      return {
+        titlesUpdated,
+        streamsRemoved: streamsRemoved + (deletedStreams.deletedCount || 0),
+        titleKeys // Return all title_keys for checking titles without streams
+      };
+    } catch (error) {
+      logger.error(`Error removing providers from all title sources: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
    * Remove provider from title sources for disabled categories
    * More efficient: queries provider_titles directly to find disabled category titles
    * @param {string} providerId - Provider ID
