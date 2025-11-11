@@ -4,7 +4,6 @@ import {
     Paper,
     Typography,
     CircularProgress,
-    Chip,
     Alert,
     IconButton,
     Tooltip,
@@ -13,35 +12,87 @@ import {
 import RefreshIcon from '@mui/icons-material/Refresh';
 import axiosInstance from '../../config/axios';
 import { API_ENDPOINTS } from '../../config/api';
+import { intervalToDuration, formatDuration } from 'date-fns';
+import yaml from 'js-yaml';
 
 /**
- * Format date for display
+ * Parse interval string (e.g., "1h", "6h", "1m") to milliseconds
+ */
+const parseInterval = (intervalStr) => {
+    if (!intervalStr) return null;
+    const match = String(intervalStr).match(/^(\d+)([smhd])?$/i);
+    if (!match) return null;
+    const value = parseInt(match[1], 10);
+    const unit = (match[2] || 'ms').toLowerCase();
+    const multipliers = { ms: 1, s: 1000, m: 60000, h: 3600000, d: 86400000 };
+    return value * (multipliers[unit] || 1);
+};
+
+/**
+ * Format date for display as accurate relative time (e.g., "6 hours and 4 minutes ago")
  */
 const formatDate = (dateString) => {
     if (!dateString) return 'Never';
     try {
         const date = new Date(dateString);
-        return date.toLocaleString();
+        const now = new Date();
+        
+        const duration = intervalToDuration({ start: date, end: now });
+        const readable = formatDuration(duration);
+        
+        if (!readable || readable.trim() === '') {
+            return 'just now';
+        }
+        
+        return `${readable} ago`;
     } catch (error) {
         return 'Invalid date';
     }
 };
 
 /**
- * Get status color for chip
+ * Calculate and format next execution time
  */
-const getStatusColor = (status) => {
-    switch (status) {
-        case 'running':
-            return 'info';
-        case 'completed':
-            return 'success';
-        case 'failed':
-            return 'error';
-        case 'cancelled':
-            return 'warning';
-        default:
-            return 'default';
+const formatNextExecution = (lastExecution, interval) => {
+    if (!interval) {
+        return 'Manual trigger only';
+    }
+    
+    const intervalMs = parseInterval(interval);
+    if (!intervalMs) {
+        return 'N/A';
+    }
+    
+    try {
+        const now = new Date();
+        let nextExecution;
+        
+        if (lastExecution) {
+            const lastExec = new Date(lastExecution);
+            nextExecution = new Date(lastExec.getTime() + intervalMs);
+        } else {
+            // If never executed, show next execution as now + interval
+            nextExecution = new Date(now.getTime() + intervalMs);
+        }
+        
+        // If next execution is in the past (job is overdue), show "overdue"
+        if (nextExecution < now) {
+            const overdue = intervalToDuration({ start: nextExecution, end: now });
+            const overdueReadable = formatDuration(overdue);
+            return `Overdue by ${overdueReadable}`;
+        }
+        
+        // Format as "in X hours Y minutes"
+        const duration = intervalToDuration({ start: now, end: nextExecution });
+        const readable = formatDuration(duration);
+        
+        if (!readable || readable.trim() === '') {
+            return 'now';
+        }
+        
+        return `in ${readable}`;
+    } catch (error) {
+        return 'N/A';
     }
 };
 
@@ -51,13 +102,18 @@ const getStatusColor = (status) => {
 const formatJobResult = (jobName, lastResult) => {
     if (!lastResult) return null;
 
-    if (jobName === 'syncIPTVProviderTitles' && Array.isArray(lastResult.results)) {
-        const totalMovies = lastResult.results.reduce((sum, r) => sum + (r.movies || 0), 0);
-        const totalTvShows = lastResult.results.reduce((sum, r) => sum + (r.tvShows || 0), 0);
-        return `Processed ${lastResult.providers_processed || 0} provider(s): ${totalMovies} movies, ${totalTvShows} TV shows`;
+    try {
+        return yaml.dump(lastResult, { 
+            indent: 2,
+            lineWidth: 0, // Force block style formatting
+            noRefs: true,
+            skipInvalid: false,
+            flowLevel: -1 // Use block style for all levels
+        });
+    } catch (error) {
+        // Fallback to JSON if YAML conversion fails
+        return JSON.stringify(lastResult, null, 2);
     }
-
-    return JSON.stringify(lastResult);
 };
 
 /**
@@ -72,64 +128,64 @@ const JobCard = ({ job }) => {
                 mb: 2,
                 display: 'flex',
                 flexDirection: 'column',
-                gap: 2
+                gap: 2,
+                height: '100%',
+                minHeight: '400px'
             }}
         >
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <Box sx={{ flex: 1 }}>
-                    <Typography variant="h6" gutterBottom>
-                        {job.name} ({job.schedule})
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary" paragraph>
-                        {job.description}
-                    </Typography>
-                </Box>
-                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                    <Chip
-                        label={job.status || 'unknown'}
-                        color={getStatusColor(job.status)}
-                        size="small"
-                    />
-                </Box>
+            <Box>
+                <Typography variant="h6" gutterBottom>
+                    {job.name}
+                </Typography>
+                <Typography variant="body2" color="text.secondary" paragraph>
+                    {job.description}
+                </Typography>
             </Box>
 
-            <Grid container spacing={2}>
-                <Grid item xs={12} sm={6}>
+            <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                <Box>
                     <Typography variant="body2" color="text.secondary">
-                        Last Execution:
+                        <span style={{ fontWeight: 500, textTransform: 'capitalize', color: 'inherit' }}>{job.status || 'unknown'}</span> {formatDate(job.lastExecution)}
                     </Typography>
-                    <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                        {formatDate(job.lastExecution)}
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                        Next Execution: <span style={{ fontWeight: 500, color: 'inherit' }}>{formatNextExecution(job.lastExecution, job.interval)}</span>
                     </Typography>
-                </Grid>
-                <Grid item xs={12} sm={6}>
-                    <Typography variant="body2" color="text.secondary">
-                        Last Update:
-                    </Typography>
-                    <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                        {formatDate(job.lastUpdated)}
-                    </Typography>
-                </Grid>
+                </Box>
                 {job.lastResult && (
-                    <Grid item xs={12}>
-                        <Typography variant="body2" color="text.secondary">
-                            Last Result:
-                        </Typography>
-                        <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                            {formatJobResult(job.name, job.lastResult)}
-                        </Typography>
-                    </Grid>
+                    <Box sx={{ mt: 2, flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                    <Typography variant="body2" color="text.secondary">
+                        Last Result:
+                    </Typography>
+                    <Box 
+                        component="pre" 
+                        sx={{ 
+                            fontWeight: 500,
+                            fontSize: '0.875rem',
+                            fontFamily: 'monospace',
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                            backgroundColor: 'rgba(0, 0, 0, 0.02)',
+                            p: 1,
+                            borderRadius: 1,
+                            mt: 0.5,
+                            mb: 0,
+                            overflow: 'auto',
+                            flex: 1,
+                            minHeight: 0
+                        }}
+                    >
+                        {formatJobResult(job.name, job.lastResult)}
+                    </Box>
+                    </Box>
                 )}
                 {job.lastError && (
-                    <Grid item xs={12}>
-                        <Alert severity="error" sx={{ mt: 1 }}>
-                            <Typography variant="body2">
-                                <strong>Error:</strong> {job.lastError}
-                            </Typography>
-                        </Alert>
-                    </Grid>
+                    <Alert severity="error" sx={{ mt: 2 }}>
+                        <Typography variant="body2">
+                            <strong>Error:</strong> {job.lastError}
+                        </Typography>
+                    </Alert>
                 )}
-            </Grid>
+            </Box>
         </Paper>
     );
 };
@@ -281,7 +337,7 @@ const SettingsJobs = () => {
             ) : jobs.length > 0 ? (
                 <Grid container spacing={2}>
                     {jobs.map((job) => (
-                        <Grid item xs={12} md={4} key={job.name}>
+                        <Grid item xs={12} sm={6} md={3} key={job.name}>
                             <JobCard job={job} />
                         </Grid>
                     ))}
