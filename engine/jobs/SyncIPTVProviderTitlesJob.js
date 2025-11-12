@@ -36,18 +36,44 @@ export class SyncIPTVProviderTitlesJob extends BaseJob {
       // Set status to "running" at start (after reading last_execution)
       await this.setJobStatus('running');
 
-      // Load provider titles incrementally (only updated since last execution)
-      // Include ignored titles for proper comparison and filtering
-      for (const [providerId, providerInstance] of this.providers) {
-        try {
-          await providerInstance.loadProviderTitles(lastExecution, true);
-        } catch (error) {
-          this.logger.warn(`[${providerId}] Error loading titles from MongoDB: ${error.message}`);
-        }
-      }
-
       // Fetch metadata from all providers
-      const results = await this.fetchAllMetadata();
+      // Note: fetchMetadata() will load all provider titles internally for comparison
+      this.logger.info(`Starting metadata fetch process for ${this.providers.size} provider(s)...`);
+      
+      const results = await Promise.all(
+        Array.from(this.providers.entries()).map(async ([providerId, providerInstance]) => {
+          try {
+            this.logger.debug(`[${providerId}] Processing provider (${providerInstance.getProviderType()})`);
+            this.logger.info(`Fetching metadata from provider ${providerId}...`);
+            
+            // Fetch movies and TV shows in parallel
+            const [moviesCount, tvShowsCount] = await Promise.all([
+              providerInstance.fetchMetadata('movies').catch(err => {
+                this.logger.error(`[${providerId}] Error fetching movies: ${err.message}`);
+                return 0;
+              }),
+              providerInstance.fetchMetadata('tvshows').catch(err => {
+                this.logger.error(`[${providerId}] Error fetching TV shows: ${err.message}`);
+                return 0;
+              })
+            ]);
+            
+            return {
+              providerId,
+              providerName: providerId,
+              movies: moviesCount,
+              tvShows: tvShowsCount
+            };
+          } catch (error) {
+            this.logger.error(`[${providerId}] Error processing provider: ${error.message}`);
+            return {
+              providerId,
+              providerName: providerId,
+              error: error.message
+            };
+          }
+        })
+      );
 
       // Set status to completed on success with result
       await this.setJobStatus('completed', {
@@ -81,66 +107,5 @@ export class SyncIPTVProviderTitlesJob extends BaseJob {
     }
   }
 
-  /**
-   * Fetch titles metadata (movies and TV shows) from a specific provider instance
-   * Fetches movies and TV shows in parallel for better performance
-   * @param {import('../providers/BaseIPTVProvider.js').BaseIPTVProvider} providerInstance - Provider instance (AGTVProvider or XtreamProvider)
-   * @param {string} providerId - Provider ID
-   * @returns {Promise<{movies: number, tvShows: number}>} Count of fetched movies and TV shows
-   */
-  async fetchMetadataFromProvider(providerInstance, providerId) {
-    // Fetch and save movies and TV shows metadata in parallel
-    this.logger.info(`Fetching metadata from provider ${providerId}...`);
-    
-    const [moviesCount, tvShowsCount] = await Promise.all([
-      providerInstance.fetchMetadata('movies').catch(err => {
-        this.logger.error(`[${providerId}] Error fetching movies: ${err.message}`);
-        return 0;
-      }),
-      providerInstance.fetchMetadata('tvshows').catch(err => {
-        this.logger.error(`[${providerId}] Error fetching TV shows: ${err.message}`);
-        return 0;
-      })
-    ]);
-
-    return {
-      movies: moviesCount,
-      tvShows: tvShowsCount
-    };
-  }
-
-  /**
-   * Fetch metadata from all providers
-   * Processes all providers in parallel for better performance
-   * @returns {Promise<Array<{providerId: string, providerName: string, movies?: number, tvShows?: number, error?: string}>>} Array of fetch results
-   */
-  async fetchAllMetadata() {
-    this.logger.info(`Starting metadata fetch process for ${this.providers.size} provider(s)...`);
-    
-    // Process all providers in parallel
-    const metadataPromises = Array.from(this.providers.entries()).map(
-      async ([providerId, providerInstance]) => {
-        try {
-          this.logger.debug(`[${providerId}] Processing provider (${providerInstance.getProviderType()})`);
-          const result = await this.fetchMetadataFromProvider(providerInstance, providerId);
-          return {
-            providerId,
-            providerName: providerId,
-            ...result
-          };
-        } catch (error) {
-          this.logger.error(`[${providerId}] Error processing provider: ${error.message}`);
-          return {
-            providerId,
-            providerName: providerId,
-            error: error.message
-          };
-        }
-      }
-    );
-    
-    const results = await Promise.all(metadataPromises);
-    return results;
-  }
 }
 

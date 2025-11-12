@@ -97,6 +97,10 @@ export class BaseIPTVProvider extends BaseProvider {
   async fetchMetadata(type) {
     this.logger.info(`${type}: Starting fetchMetadata`);
 
+    // Load ALL provider titles from MongoDB for comparison with provider data
+    this.logger.debug(`${type}: Loading all provider titles from MongoDB for comparison`);
+    await this.loadProviderTitles(null, true); // null = load all titles, true = include ignored
+
     // Step 1: Fetch titles metadata (provider-specific)
     const titles = await this._fetchTitlesMetadata(type);
 

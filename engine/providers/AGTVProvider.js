@@ -373,10 +373,9 @@ export class AGTVProvider extends BaseIPTVProvider {
    * @private
    * @param {TitleData} title - Title data to check
    * @param {Set} existingTitleMap - Set of existing title IDs
-   * @param {Map<number, boolean>} categoryMap - Map of category ID to enabled status (not used for AGTV)
    * @returns {boolean} True if title should be skipped
    */
-  _shouldSkipMovies(title, existingTitleMap, categoryMap) {
+  _shouldSkipMovies(title, existingTitleMap) {
     const config = this._typeConfig.movies;
     
     // Skip if already exists
@@ -388,22 +387,31 @@ export class AGTVProvider extends BaseIPTVProvider {
   }
 
   /**
-   * Check if a TV show title should be skipped (already exists)
+   * Check if a TV show title should be skipped (compare stream keys)
    * @private
-   * @param {TitleData} title - Title data to check
-   * @param {Set} existingTitleMap - Set of existing title IDs
-   * @param {Map<number, boolean>} categoryMap - Map of category ID to enabled status (not used for AGTV)
+   * @param {TitleData} title - Title data from API
+   * @param {Object|null} existingTitle - Existing title object from DB (null if doesn't exist)
    * @returns {boolean} True if title should be skipped
    */
-  _shouldSkipTVShows(title, existingTitleMap, categoryMap) {
+  _shouldSkipTVShows(title, existingTitle) {
     const config = this._typeConfig.tvshows;
+    const seriesId = title[config.idField];
     
-    // Skip if already exists
-    if (existingTitleMap.has(title[config.idField])) {
-      return true;
+    // If title doesn't exist, process it
+    if (!existingTitle) {
+      return false;
     }
     
-    return false;
+    // Compare stream keys: sort and join to strings for comparison
+    // Get stream keys from existing title in DB
+    const existingStreamKeys = Object.keys(existingTitle.streams || {}).sort().join(',');
+    
+    // Get stream keys from provider title (from API call)
+    const providerStreamKeys = Object.keys(title.streams || {}).sort().join(',');
+
+    const shouldSkip = existingStreamKeys === providerStreamKeys;
+
+    return shouldSkip;
   }
 
   /**
@@ -424,12 +432,11 @@ export class AGTVProvider extends BaseIPTVProvider {
     // Load existing titles to check for duplicates
     const existingTitles = this.loadTitles(type);
     
-    // Create Map for O(1) lookup of existing titles (for ignored check)
+    // Create Map for O(1) lookup of existing titles (for ignored check and stream comparison)
     const existingTitlesMap = new Map(existingTitles.map(t => [t.title_id, t]));
+    
+    // For movies, use Set (no stream comparison needed)
     const existingTitleIds = new Set(existingTitles.map(t => t.title_id).filter(Boolean));
-
-    // Create empty category map (AGTV doesn't support categories)
-    const categoryMap = new Map();
 
     // Filter titles using shouldSkip function
     const filteredTitles = titles.filter(title => {
@@ -448,7 +455,11 @@ export class AGTVProvider extends BaseIPTVProvider {
         return false;
       }
       
-      return !config.shouldSkip(title, existingTitleIds, categoryMap);
+      // For TV shows, pass existing title object directly for stream comparison
+      // For movies, pass Set as before
+      const existingTitleParam = type === 'tvshows' ? existingTitle : existingTitleIds;
+      
+      return !config.shouldSkip(title, existingTitleParam);
     });
     
     this.logger.info(`${type}: Filtered to ${filteredTitles.length} titles to process`);

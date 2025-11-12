@@ -312,31 +312,24 @@ export class MongoDataService {
       };
 
       if (existingKeys.has(key)) {
-        // Check if TMDB ID actually changed
-        const existingDoc = existingDocs.get(key);
-        const existingTmdbId = existingDoc?.tmdb_id;
-        const newTmdbId = title.tmdb_id;
-        
-        // Only update if TMDB ID changed or if title doesn't have TMDB ID yet
-        if (existingTmdbId !== newTmdbId) {
-          // Update existing - only if something actually changed
-          toUpdate.push({
-            updateOne: {
-              filter: { 
+        // If title reached saveProviderTitles, it was detected as changed or new
+        // Always update lastUpdated to ensure ProviderTitlesMonitorJob picks it up
+        // This handles cases where new episodes/streams were added but TMDB ID didn't change
+        toUpdate.push({
+          updateOne: {
+            filter: { 
+              provider_id: providerId,
+              title_key: title.title_key 
+            },
+            update: {
+              $set: {
+                ...title,
                 provider_id: providerId,
-                title_key: title.title_key 
-              },
-              update: {
-                $set: {
-                  ...title,
-                  provider_id: providerId,
-                  lastUpdated: now
-                }
+                lastUpdated: now
               }
             }
-          });
-        }
-        // If TMDB ID is the same, skip update (no changes)
+          }
+        });
       } else {
         // Insert new
         toInsert.push(titleDoc);

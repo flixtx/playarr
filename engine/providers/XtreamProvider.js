@@ -70,15 +70,15 @@ export class XtreamProvider extends BaseIPTVProvider {
    * Check if a movie title should be skipped (already exists or category disabled)
    * @private
    * @param {TitleData} title - Title data to check
-   * @param {Set} existingTitleMap - Set of existing title IDs
+   * @param {Object|null} existingTitle - Existing title object from DB (null if doesn't exist)
    * @param {Map<number, boolean>} categoryMap - Map of category ID to enabled status
    * @returns {boolean} True if title should be skipped
    */
-  _shouldSkipMovies(title, existingTitleMap, categoryMap) {
+  _shouldSkipMovies(title, existingTitle, categoryMap) {
     const config = this._typeConfig.movies;
     
     // Skip if already exists
-    if (existingTitleMap.has(title[config.idField])) {
+    if (existingTitle) {
       return true;
     }
     
@@ -92,31 +92,25 @@ export class XtreamProvider extends BaseIPTVProvider {
    * Check if a TV show title should be skipped (not modified or category disabled)
    * @private
    * @param {TitleData} title - Title data to check
-   * @param {Map} existingTitleMap - Map of existing titles with lastUpdated timestamps
+   * @param {Object|null} existingTitle - Existing title object from DB (null if doesn't exist)
    * @param {Map<number, boolean>} categoryMap - Map of category ID to enabled status
    * @returns {boolean} True if title should be skipped
    */
-  _shouldSkipTVShows(title, existingTitleMap, categoryMap) {
+  _shouldSkipTVShows(title, existingTitle, categoryMap) {
     const config = this._typeConfig.tvshows;
     const seriesId = title[config.idField];
     
-    // Handle both Set and Map (for backward compatibility)
-    let existing = null;
-    if (existingTitleMap instanceof Map) {
-      existing = existingTitleMap.get(seriesId);
-    } else if (existingTitleMap instanceof Set) {
-      // If it's a Set, we can't check lastUpdated, so just check if it exists
-      if (existingTitleMap.has(seriesId)) {
-        return true; // Skip if exists (for Set, we can't check modification date)
-      }
+    // If title doesn't exist, process it
+    if (!existingTitle) {
+      return false;
     }
     
-    // Skip if not modified since last update (only if we have a Map with lastUpdated)
-    if (existing && existing.lastUpdated) {
+    // Skip if not modified since last update
+    if (existingTitle.lastUpdated) {
       const showModified = title.info?.modified || title.modified;
       if (showModified) {
         const showModifiedTime = new Date(showModified).getTime();
-        const existingUpdatedTime = new Date(existing.lastUpdated).getTime();
+        const existingUpdatedTime = new Date(existingTitle.lastUpdated).getTime();
         if (showModifiedTime <= existingUpdatedTime) {
           return true; // Skip if not modified
         }
@@ -449,14 +443,6 @@ export class XtreamProvider extends BaseIPTVProvider {
     
     // Create Map for O(1) lookup of existing titles (for ignored check)
     const existingTitlesMap = new Map(existingTitles.map(t => [t.title_id, t]));
-    
-    // Create appropriate data structure for checking existing titles
-    const existingTitleMap = config.shouldCheckUpdates
-      ? new Map(existingTitles.map(t => [
-          t.title_id,
-          { lastUpdated: t.lastUpdated }
-        ]))
-      : new Set(existingTitles.map(t => t.title_id));
 
     // Load categories for filtering
     const categories = await this.loadCategories(type);
@@ -479,7 +465,8 @@ export class XtreamProvider extends BaseIPTVProvider {
         return false;
       }
       
-      return !config.shouldSkip(title, existingTitleMap, categoryMap);
+      // Pass existing title object directly
+      return !config.shouldSkip(title, existingTitle, categoryMap);
     });
     
     this.logger.info(`${type}: Filtered to ${filteredTitles.length} titles to process`);
