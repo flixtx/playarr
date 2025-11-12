@@ -14,12 +14,6 @@ import { MongoDataService } from '../services/MongoDataService.js';
  */
 export class ApplicationContext {
   static instance = null;
-  
-  /**
-   * Provider action queue: Map of job name to Set of provider IDs
-   * @type {Map<string, Set<string>>}
-   */
-  _providerActionQueue = new Map();
 
   /**
    * Get the singleton instance
@@ -119,9 +113,6 @@ export class ApplicationContext {
       logger.warn('No providers were successfully loaded');
     }
 
-    // Initialize provider action queue
-    context._providerActionQueue = new Map();
-
     logger.debug('Application context initialization completed');
     return context;
   }
@@ -189,28 +180,6 @@ export class ApplicationContext {
     this._currentJobData?.delete(jobName);
   }
 
-  /**
-   * Add provider to action queue for a specific job
-   * @param {string} jobName - Name of the job
-   * @param {string} providerId - Provider ID to add
-   */
-  addProviderToActionQueue(jobName, providerId) {
-    if (!this._providerActionQueue.has(jobName)) {
-      this._providerActionQueue.set(jobName, new Set());
-    }
-    this._providerActionQueue.get(jobName).add(providerId);
-  }
-
-  /**
-   * Get and clear providers for a specific job
-   * @param {string} jobName - Name of the job
-   * @returns {Set<string>} Set of provider IDs
-   */
-  getAndClearProviderActionQueue(jobName) {
-    const providers = this._providerActionQueue.get(jobName) || new Set();
-    this._providerActionQueue.set(jobName, new Set()); // Clear after getting
-    return providers;
-  }
 
   /**
    * Create a provider instance based on type

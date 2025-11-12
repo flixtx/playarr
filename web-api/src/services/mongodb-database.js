@@ -646,61 +646,130 @@ class MongoDatabaseService {
   }
 
   /**
-   * Remove provider from titles.streams object
-   * Efficiently queries title_streams first to find only affected titles
-   * @param {string} providerId - Provider ID to remove
-   * @returns {Promise<{titlesUpdated: number, streamsRemoved: number}>}
+   * Extract category IDs from category keys
+   * Category keys format: "movies-1", "tvshows-5"
+   * Returns: [1, 5] (numeric IDs)
+   * @private
+   * @param {Array<string>} categoryKeys - Array of category keys
+   * @returns {Array<number>} Array of category IDs
    */
-  async removeProviderFromTitles(providerId) {
+  _extractCategoryIdsFromKeys(categoryKeys) {
+    if (!categoryKeys || categoryKeys.length === 0) {
+      return [];
+    }
+
+    return categoryKeys
+      .map(key => {
+        const parts = key.split('-');
+        return parts.length > 1 ? parseInt(parts[1]) : null;
+      })
+      .filter(id => id !== null && !isNaN(id));
+  }
+
+  /**
+   * Remove provider from titles.streams object (unified: all, specific categories, or disabled categories)
+   * @param {string} providerId - Provider ID to remove
+   * @param {Array<string>|null} [categoryKeys=null] - If provided, only remove from titles in these categories
+   * @param {Object|null} [enabledCategories=null] - If provided, remove from all EXCEPT enabled categories
+   * @returns {Promise<{titlesUpdated: number, streamsRemoved: number, titleKeys: Array<string>}>}
+   */
+  async removeProviderFromTitles(providerId, categoryKeys = null, enabledCategories = null) {
     try {
-      // 1. Get all title_streams for this provider
-      const streams = await this.db.collection('title_streams')
-        .find({ provider_id: providerId })
-        .toArray();
-      
-      if (streams.length === 0) {
-        return { titlesUpdated: 0, streamsRemoved: 0 };
+      let query = {
+        provider_id: providerId,
+        tmdb_id: { $exists: true, $ne: null } // Only titles with TMDB match
+      };
+
+      // Build query filter based on parameters
+      if (enabledCategories) {
+        // Categories-changed scenario: remove from disabled categories
+        const enabledCategoryKeys = [
+          ...(enabledCategories.movies || []),
+          ...(enabledCategories.tvshows || [])
+        ];
+        const enabledCategoryIds = this._extractCategoryIdsFromKeys(enabledCategoryKeys);
+        
+        if (enabledCategoryIds.length > 0) {
+          query.category_id = { $nin: enabledCategoryIds }; // NOT in enabled = disabled
+        }
+        // If no enabled categories, all are disabled, so query remains as-is
+      } else if (categoryKeys && categoryKeys.length > 0) {
+        // Specific categories scenario
+        const categoryIds = this._extractCategoryIdsFromKeys(categoryKeys);
+        if (categoryIds.length > 0) {
+          query.category_id = { $in: categoryIds };
+        } else {
+          // Invalid category keys, return early
+          return { titlesUpdated: 0, streamsRemoved: 0, titleKeys: [] };
+        }
       }
-      
-      // 2. Extract unique title_key values
-      const titleKeys = [...new Set(streams.map(s => s.title_key))];
-      
-      // 3. Fetch only affected titles
+      // If categoryKeys is null and enabledCategories is null, query remains:
+      // { provider_id: providerId, tmdb_id: { $exists: true, $ne: null } }
+      // This means "all categories" (for delete/disable provider)
+
+      // Execute single query
+      const providerTitles = await this.db.collection('provider_titles')
+        .find(query)
+        .toArray();
+
+      if (providerTitles.length === 0) {
+        return { titlesUpdated: 0, streamsRemoved: 0, titleKeys: [] };
+      }
+
+      // Construct title_keys from tmdb_id + type (to match titles and title_streams)
+      // provider_titles.title_key is {type}-{title_id}, but we need {type}-{tmdb_id}
+      const titleKeys = [...new Set(
+        providerTitles
+          .filter(t => t.tmdb_id && t.type)
+          .map(t => `${t.type}-${t.tmdb_id}`)
+      )];
+
+      if (titleKeys.length === 0) {
+        return { titlesUpdated: 0, streamsRemoved: 0, titleKeys: [] };
+      }
+
+      // Delete title_streams for these title_keys and provider
+      const deletedStreams = await this.db.collection('title_streams')
+        .deleteMany({
+          provider_id: providerId,
+          title_key: { $in: titleKeys }
+        });
+
+      // Remove from titles.streams
       const titles = await this.db.collection('titles')
         .find({ title_key: { $in: titleKeys } })
         .toArray();
-      
+
       if (titles.length === 0) {
-        return { titlesUpdated: 0, streamsRemoved: 0 };
+        return {
+          titlesUpdated: 0,
+          streamsRemoved: deletedStreams.deletedCount || 0,
+          titleKeys
+        };
       }
-      
+
       let titlesUpdated = 0;
-      let streamsRemoved = 0;
+      let streamsRemoved = deletedStreams.deletedCount || 0;
       const bulkOps = [];
-      
-      // 4. Process each title
+
+      // Process each title to remove provider from streams
       for (const title of titles) {
         const streamsObj = title.streams || {};
         let titleModified = false;
         const updatedStreams = { ...streamsObj };
         
-        // Process each stream entry in the streams object
         for (const [streamKey, streamValue] of Object.entries(streamsObj)) {
-          // Both movies and TV shows use the same structure: { sources: [...] }
-          // TV shows have additional metadata fields (air_date, name, overview, still_path)
           if (streamValue && typeof streamValue === 'object' && Array.isArray(streamValue.sources)) {
             const originalLength = streamValue.sources.length;
             const filteredSources = streamValue.sources.filter(id => id !== providerId);
             
             if (filteredSources.length !== originalLength) {
               if (filteredSources.length > 0) {
-                // Keep the stream entry with filtered sources (preserve metadata for TV shows)
                 updatedStreams[streamKey] = {
                   ...streamValue,
                   sources: filteredSources
                 };
               } else {
-                // Remove stream entry if no sources left
                 updatedStreams[streamKey] = undefined;
               }
               streamsRemoved += (originalLength - filteredSources.length);
@@ -709,14 +778,13 @@ class MongoDatabaseService {
           }
         }
         
-        // Remove undefined entries (streams with no sources left)
+        // Remove undefined entries
         for (const key in updatedStreams) {
           if (updatedStreams[key] === undefined) {
             delete updatedStreams[key];
           }
         }
         
-        // 5. Prepare update operation
         if (titleModified) {
           titlesUpdated++;
           bulkOps.push({
@@ -733,17 +801,20 @@ class MongoDatabaseService {
         }
       }
       
-      // 6. Execute bulk update
+      // Execute bulk update
       if (bulkOps.length > 0) {
         const collection = this.db.collection('titles');
-        // Process in batches of 1000
         for (let i = 0; i < bulkOps.length; i += 1000) {
           const batch = bulkOps.slice(i, i + 1000);
           await collection.bulkWrite(batch, { ordered: false });
         }
       }
-      
-      return { titlesUpdated, streamsRemoved };
+
+      return {
+        titlesUpdated,
+        streamsRemoved,
+        titleKeys
+      };
     } catch (error) {
       logger.error(`Error removing provider ${providerId} from titles: ${error.message}`);
       throw error;
@@ -751,16 +822,56 @@ class MongoDatabaseService {
   }
 
   /**
-   * Delete all title_streams documents for a provider
+   * Delete title streams for a provider (unified: all or specific categories)
    * @param {string} providerId - Provider ID
+   * @param {Array<string>|null} [categoryKeys=null] - If null, delete all. If array, delete only these categories
    * @returns {Promise<number>} Number of documents deleted
    */
-  async deleteProviderTitleStreams(providerId) {
+  async deleteProviderTitleStreams(providerId, categoryKeys = null) {
     try {
-      const result = await this.db.collection('title_streams')
-        .deleteMany({ provider_id: providerId });
-      
-      return result.deletedCount;
+      if (categoryKeys && categoryKeys.length > 0) {
+        // For specific categories: need to find title_keys first via provider_titles
+        const categoryIds = this._extractCategoryIdsFromKeys(categoryKeys);
+        if (categoryIds.length === 0) {
+          return 0;
+        }
+        
+        const providerTitles = await this.db.collection('provider_titles')
+          .find({ 
+            provider_id: providerId,
+            category_id: { $in: categoryIds }
+          })
+          .toArray();
+        
+        if (providerTitles.length === 0) {
+          return 0;
+        }
+        
+        // Construct title_keys from tmdb_id + type (to match titles and title_streams)
+        const titleKeys = [...new Set(
+          providerTitles
+            .filter(t => t.tmdb_id && t.type)
+            .map(t => `${t.type}-${t.tmdb_id}`)
+        )];
+        
+        if (titleKeys.length === 0) {
+          return 0;
+        }
+        
+        // Delete title streams for these title_keys and provider
+        const result = await this.db.collection('title_streams')
+          .deleteMany({ 
+            provider_id: providerId,
+            title_key: { $in: titleKeys }
+          });
+        
+        return result.deletedCount || 0;
+      } else {
+        // Delete all for provider
+        const result = await this.db.collection('title_streams')
+          .deleteMany({ provider_id: providerId });
+        return result.deletedCount || 0;
+      }
     } catch (error) {
       logger.error(`Error deleting title streams for provider ${providerId}: ${error.message}`);
       throw error;
@@ -768,18 +879,101 @@ class MongoDatabaseService {
   }
 
   /**
-   * Delete all provider_titles documents for a provider
+   * Delete provider titles for a provider (unified: all or specific categories)
    * @param {string} providerId - Provider ID
+   * @param {Array<string>|null} [categoryKeys=null] - If null, delete all. If array, delete only these categories
    * @returns {Promise<number>} Number of documents deleted
    */
-  async deleteProviderTitles(providerId) {
+  async deleteProviderTitles(providerId, categoryKeys = null) {
     try {
-      const result = await this.db.collection('provider_titles')
-        .deleteMany({ provider_id: providerId });
+      const query = { provider_id: providerId };
       
-      return result.deletedCount;
+      if (categoryKeys && categoryKeys.length > 0) {
+        // Filter by categories
+        const categoryIds = this._extractCategoryIdsFromKeys(categoryKeys);
+        if (categoryIds.length > 0) {
+          query.category_id = { $in: categoryIds };
+        } else {
+          // Invalid category keys, return early
+          return 0;
+        }
+      }
+      // If categoryKeys is null, query remains { provider_id: providerId } → deletes all
+      
+      const result = await this.db.collection('provider_titles')
+        .deleteMany(query);
+      
+      return result.deletedCount || 0;
     } catch (error) {
       logger.error(`Error deleting provider titles for provider ${providerId}: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete titles that have no streams left
+   * @param {Array<string>} titleKeys - Array of title_keys to check
+   * @returns {Promise<number>} Number of deleted titles
+   */
+  async deleteTitlesWithoutStreams(titleKeys) {
+    try {
+      if (!titleKeys || titleKeys.length === 0) {
+        return 0;
+      }
+
+      // Build query filter using MongoDB aggregation expression
+      const queryFilter = {
+        title_key: { $in: titleKeys },
+        $expr: {
+          $or: [
+            // Case 1: streams missing or empty object
+            { $eq: [{ $size: { $objectToArray: { $ifNull: ["$streams", {}] } } }, 0] },
+            
+            // Case 2: all stream sources are empty
+            {
+              $allElementsTrue: {
+                $map: {
+                  input: { $objectToArray: { $ifNull: ["$streams", {}] } },
+                  as: "stream",
+                  in: {
+                    $or: [
+                      { $not: { $isArray: "$$stream.v.sources" } },
+                      { $eq: [{ $size: { $ifNull: ["$$stream.v.sources", []] } }, 0] }
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        }
+      };
+
+      const result = await this.db.collection('titles')
+        .deleteMany(queryFilter);
+      
+      return result.deletedCount || 0;
+    } catch (error) {
+      logger.error(`Error deleting titles without streams: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Reset lastUpdated field for all provider titles
+   * @param {string} providerId - Provider ID
+   * @returns {Promise<number>} Number of updated documents
+   */
+  async resetProviderTitlesLastUpdated(providerId) {
+    try {
+      const result = await this.db.collection('provider_titles')
+        .updateMany(
+          { provider_id: providerId },
+          { $set: { lastUpdated: new Date() } }
+        );
+      
+      return result.modifiedCount || 0;
+    } catch (error) {
+      logger.error(`Error resetting lastUpdated for provider ${providerId}: ${error.message}`);
       throw error;
     }
   }

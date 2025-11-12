@@ -135,9 +135,10 @@ export class SyncIPTVProviderCategoriesJob extends BaseJob {
             `[${providerId}] Auto-disabled ${missingCategoryKeys.length} missing category(ies) in provider config`
           );
 
-          // Add provider to categories changed queue for cleanup
-          context.addProviderToActionQueue('iptvProviderCategoriesChanged', providerId);
-          this.logger.info(`[${providerId}] Added to categories changed queue for cleanup`);
+          // Note: Cleanup for disabled categories will happen when user updates categories in UI
+          // or when the next sync runs. No need to queue action since cleanup is now handled
+          // synchronously in the web API layer.
+          this.logger.info(`[${providerId}] Auto-disabled missing categories - cleanup will occur on next category update`);
 
           results.push({
             providerId,

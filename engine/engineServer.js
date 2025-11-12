@@ -134,46 +134,71 @@ class EngineServer {
     });
 
     /**
-     * POST /api/providers/:providerId/action
-     * Trigger a provider action (add, delete, enable, disable, categories-changed)
-     * Body: { action: "added" | "deleted" | "enabled" | "disabled" | "categories-changed" }
+     * POST /api/providers/:providerId/changed
+     * Handle provider changed events from web API
+     * Body: { action: "created" | "deleted" | "enabled" | "disabled" | "categories-changed" | "updated", providerId: string, providerConfig?: object }
      */
-    this._app.post('/api/providers/:providerId/action', async (req, res) => {
+    this._app.post('/api/providers/:providerId/changed', async (req, res) => {
       try {
         const { providerId } = req.params;
-        const { action } = req.body;
+        const { action, providerConfig } = req.body;
 
         if (!action) {
           return res.status(400).json({ error: 'action is required' });
         }
 
-        const actionToJobMap = {
-          'added': 'iptvProviderAdded',
-          'deleted': 'iptvProviderDeleted',
-          'enabled': 'iptvProviderEnabled',
-          'disabled': 'iptvProviderDisabled',
-          'categories-changed': 'iptvProviderCategoriesChanged'
-        };
-
-        const jobName = actionToJobMap[action];
-        if (!jobName) {
-          return res.status(400).json({ error: `Invalid action: ${action}` });
+        const context = ApplicationContext.getInstance();
+        const validActions = ['created', 'deleted', 'enabled', 'disabled', 'categories-changed', 'updated'];
+        
+        if (!validActions.includes(action)) {
+          return res.status(400).json({ error: `Invalid action: ${action}. Must be one of: ${validActions.join(', ')}` });
         }
 
-        // Add provider to action queue
-        const context = ApplicationContext.getInstance();
-        context.addProviderToActionQueue(jobName, providerId);
+        logger.info(`Provider changed event: ${action} for provider ${providerId}`);
 
-        logger.info(`Provider action queued: ${action} for provider ${providerId}`);
-        res.json({ 
-          success: true, 
-          message: `Provider action '${action}' queued for provider ${providerId}`,
-          providerId,
-          action
-        });
+        // Handle action based on type
+        try {
+          switch (action) {
+            case 'created':
+              await this._handleProviderCreated(context, providerId, providerConfig);
+              break;
+            
+            case 'deleted':
+              await this._handleProviderDeleted(context, providerId);
+              break;
+            
+            case 'enabled':
+              await this._handleProviderEnabled(context, providerId, providerConfig);
+              break;
+            
+            case 'disabled':
+              await this._handleProviderDisabled(context, providerId, providerConfig);
+              break;
+            
+            case 'categories-changed':
+              await this._handleProviderCategoriesChanged(context, providerId, providerConfig);
+              break;
+            
+            case 'updated':
+              await this._handleProviderUpdated(context, providerId, providerConfig);
+              break;
+          }
+
+          res.json({ 
+            success: true, 
+            message: `Provider ${action} handled successfully`,
+            providerId,
+            action
+          });
+        } catch (error) {
+          logger.error(`Error handling provider ${action} for ${providerId}:`, error);
+          res.status(500).json({ 
+            error: `Failed to handle provider ${action}: ${error.message}` 
+          });
+        }
       } catch (error) {
-        logger.error(`Error queuing provider action:`, error);
-        res.status(500).json({ error: `Failed to queue provider action: ${error.message}` });
+        logger.error(`Error processing provider changed event:`, error);
+        res.status(500).json({ error: `Failed to process provider changed event: ${error.message}` });
       }
     });
 
@@ -214,6 +239,176 @@ class EngineServer {
     this._app.get('/api/health', (req, res) => {
       res.json({ status: 'ok', service: 'engine-api' });
     });
+  }
+
+  /**
+   * Handle provider created
+   * @private
+   */
+  async _handleProviderCreated(context, providerId, providerConfig) {
+    // Fetch provider config if not provided
+    if (!providerConfig) {
+      providerConfig = await context.mongoData.getProviderConfig(providerId);
+    }
+
+    if (!providerConfig) {
+      throw new Error(`Provider ${providerId} not found in database`);
+    }
+
+    // Get or create provider instance
+    let providerInstance = context.providers.get(providerId);
+    if (providerInstance) {
+      logger.info(`Provider ${providerId} already exists in context, updating configuration`);
+      await providerInstance.updateConfiguration(providerConfig);
+    } else {
+      // Create new provider instance
+      providerInstance = context.createProviderInstance(providerConfig);
+      await providerInstance.initializeCachePolicies();
+      context.providers.set(providerId, providerInstance);
+      logger.info(`Added provider ${providerId} to ApplicationContext`);
+    }
+
+    // If enabled, trigger sync job
+    if (providerConfig.enabled) {
+      await this._scheduler.runJob('syncIPTVProviderTitles', { providerId });
+    }
+  }
+
+  /**
+   * Handle provider deleted
+   * @private
+   */
+  async _handleProviderDeleted(context, providerId) {
+    const providerInstance = context.providers.get(providerId);
+
+    if (providerInstance) {
+      // Cleanup cache files
+      await providerInstance.cleanup();
+      
+      // Delete cache policies
+      await providerInstance.deleteCachePolicies();
+      
+      // Remove from ApplicationContext
+      context.providers.delete(providerId);
+      logger.info(`Removed provider ${providerId} from ApplicationContext`);
+    } else {
+      logger.warn(`Provider ${providerId} instance not found in ApplicationContext, skipping cleanup`);
+    }
+  }
+
+  /**
+   * Handle provider enabled
+   * @private
+   */
+  async _handleProviderEnabled(context, providerId, providerConfig) {
+    // Fetch provider config if not provided
+    if (!providerConfig) {
+      providerConfig = await context.mongoData.getProviderConfig(providerId);
+    }
+
+    if (!providerConfig) {
+      throw new Error(`Provider ${providerId} not found in database`);
+    }
+
+    // Get or create provider instance
+    let providerInstance = context.providers.get(providerId);
+    if (!providerInstance) {
+      providerInstance = context.createProviderInstance(providerConfig);
+      await providerInstance.initializeCachePolicies();
+      context.providers.set(providerId, providerInstance);
+      logger.info(`Created provider instance for ${providerId}`);
+    }
+
+    // Update configuration
+    await providerInstance.updateConfiguration(providerConfig);
+
+    // Reset lastUpdated for all provider titles
+    const titlesUpdated = await providerInstance.resetTitlesLastUpdated();
+    logger.info(`Reset lastUpdated for ${titlesUpdated} provider titles for ${providerId}`);
+
+    // Trigger sync job
+    await this._scheduler.runJob('syncIPTVProviderTitles', { providerId });
+  }
+
+  /**
+   * Handle provider disabled
+   * @private
+   */
+  async _handleProviderDisabled(context, providerId, providerConfig) {
+    // Fetch provider config if not provided
+    if (!providerConfig) {
+      providerConfig = await context.mongoData.getProviderConfig(providerId);
+    }
+
+    if (!providerConfig) {
+      throw new Error(`Provider ${providerId} not found in database`);
+    }
+
+    // Get or create provider instance
+    let providerInstance = context.providers.get(providerId);
+    if (!providerInstance) {
+      providerInstance = context.createProviderInstance(providerConfig);
+      await providerInstance.initializeCachePolicies();
+      context.providers.set(providerId, providerInstance);
+      logger.info(`Created provider instance for ${providerId}`);
+    }
+
+    // Update configuration
+    await providerInstance.updateConfiguration(providerConfig);
+  }
+
+  /**
+   * Handle provider categories changed
+   * @private
+   */
+  async _handleProviderCategoriesChanged(context, providerId, providerConfig) {
+    // Fetch provider config if not provided
+    if (!providerConfig) {
+      providerConfig = await context.mongoData.getProviderConfig(providerId);
+    }
+
+    if (!providerConfig) {
+      throw new Error(`Provider ${providerId} not found in database`);
+    }
+
+    // Get or create provider instance
+    let providerInstance = context.providers.get(providerId);
+    if (!providerInstance) {
+      providerInstance = context.createProviderInstance(providerConfig);
+      await providerInstance.initializeCachePolicies();
+      context.providers.set(providerId, providerInstance);
+      logger.info(`Created provider instance for ${providerId}`);
+    }
+
+    // Update configuration
+    await providerInstance.updateConfiguration(providerConfig);
+
+    // Trigger sync job
+    await this._scheduler.runJob('syncIPTVProviderTitles', { providerId });
+  }
+
+  /**
+   * Handle provider updated (general update, no state change)
+   * @private
+   */
+  async _handleProviderUpdated(context, providerId, providerConfig) {
+    // Fetch provider config if not provided
+    if (!providerConfig) {
+      providerConfig = await context.mongoData.getProviderConfig(providerId);
+    }
+
+    if (!providerConfig) {
+      throw new Error(`Provider ${providerId} not found in database`);
+    }
+
+    // Update configuration if instance exists
+    const providerInstance = context.providers.get(providerId);
+    if (providerInstance) {
+      await providerInstance.updateConfiguration(providerConfig);
+      logger.info(`Updated provider ${providerId} configuration in ApplicationContext`);
+    } else {
+      logger.debug(`Provider ${providerId} instance not in context, will be loaded on next sync`);
+    }
   }
 
   /**

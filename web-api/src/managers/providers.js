@@ -274,8 +274,8 @@ class ProvidersManager extends BaseManager {
       providers.push(providerData);
       await this._writeAllProviders(providers);
 
-      // Trigger engine action for provider added
-      await this._triggerEngineProviderAction(providerData.id, 'added');
+      // Trigger engine notification for provider created
+      await this._notifyEngineProviderChanged(providerData.id, 'created', providerData);
 
       // Broadcast WebSocket event
       this._webSocketService.broadcastEvent('provider_changed', {
@@ -349,14 +349,44 @@ class ProvidersManager extends BaseManager {
         }
       }
 
+      // Handle enable/disable cleanup
+      if (enabledChanged && !willBeEnabled) {
+        // Provider being disabled - perform cleanup
+        try {
+          const { titlesUpdated, streamsRemoved, titleKeys } = 
+            await this._database.removeProviderFromTitles(providerId);
+          
+          // removeProviderFromTitles already deletes title_streams, so no need to call deleteProviderTitleStreams
+          const deletedEmptyTitles = await this._database.deleteTitlesWithoutStreams(titleKeys);
+          
+          this.logger.info(
+            `Provider ${providerId} disabled cleanup: ${titlesUpdated} titles updated, ` +
+            `${streamsRemoved} streams removed, ${deletedEmptyTitles} empty titles deleted`
+          );
+        } catch (error) {
+          this.logger.error(`Error cleaning up disabled provider ${providerId}: ${error.message}`);
+        }
+      } else if (enabledChanged && willBeEnabled) {
+        // Provider being enabled - reset titles lastUpdated
+        try {
+          const updatedCount = await this._database.resetProviderTitlesLastUpdated(providerId);
+          this.logger.info(`Reset lastUpdated for ${updatedCount} provider titles for ${providerId}`);
+        } catch (error) {
+          this.logger.error(`Error resetting titles lastUpdated for provider ${providerId}: ${error.message}`);
+        }
+      }
+
       // Update in array and save
       providers[providerIndex] = updatedProvider;
       await this._writeAllProviders(providers);
 
-      // Trigger engine action based on changes
+      // Trigger engine notification based on changes
       if (enabledChanged) {
         const action = willBeEnabled ? 'enabled' : 'disabled';
-        await this._triggerEngineProviderAction(providerId, action);
+        await this._notifyEngineProviderChanged(providerId, action, updatedProvider);
+      } else {
+        // General update (no state change)
+        await this._notifyEngineProviderChanged(providerId, 'updated', updatedProvider);
       }
 
       // Broadcast WebSocket event
@@ -396,16 +426,23 @@ class ProvidersManager extends BaseManager {
 
       const provider = providers[providerIndex];
 
-      // Perform cleanup operations
+      // Perform cleanup operations using unified functions
       try {
-        // Remove provider from titles.streams and main-titles-streams
-        await this._database.removeProviderFromTitles(providerId);
+        // 1. Remove provider from titles.streams (and delete title_streams)
+        const { titlesUpdated, streamsRemoved, titleKeys } = 
+          await this._database.removeProviderFromTitles(providerId);
         
-        // Delete all title_streams for this provider
-        await this._database.deleteProviderTitleStreams(providerId);
+        // 2. Delete all provider_titles for this provider (only on delete, not disable)
+        const deletedTitles = await this._database.deleteProviderTitles(providerId);
         
-        // Delete all provider_titles for this provider (only on delete, not disable)
-        await this._database.deleteProviderTitles(providerId);
+        // 3. Delete titles without streams (optional, can be async/background)
+        const deletedEmptyTitles = await this._database.deleteTitlesWithoutStreams(titleKeys);
+        
+        this.logger.info(
+          `Provider ${providerId} cleanup: ${titlesUpdated} titles updated, ` +
+          `${streamsRemoved} streams removed, ${deletedTitles} provider titles deleted, ` +
+          `${deletedEmptyTitles} empty titles deleted`
+        );
       } catch (error) {
         // Log error but don't fail the provider deletion
         this.logger.error(`Error cleaning up provider ${providerId}: ${error.message}`);
@@ -421,8 +458,8 @@ class ProvidersManager extends BaseManager {
       
       await this._writeAllProviders(providers);
 
-      // Trigger engine action for provider deleted
-      await this._triggerEngineProviderAction(providerId, 'deleted');
+      // Trigger engine notification for provider deleted
+      await this._notifyEngineProviderChanged(providerId, 'deleted');
 
       // Broadcast WebSocket event
       this._webSocketService.broadcastEvent('provider_changed', {
@@ -502,23 +539,30 @@ class ProvidersManager extends BaseManager {
   }
 
   /**
-   * Trigger engine provider action
+   * Notify engine of provider change
    * @private
    * @param {string} providerId - Provider ID
-   * @param {string} action - Action type: 'added' | 'deleted' | 'enabled' | 'disabled' | 'categories-changed'
+   * @param {string} action - Action type: 'created' | 'deleted' | 'enabled' | 'disabled' | 'categories-changed' | 'updated'
+   * @param {Object} [providerConfig] - Optional provider config (engine can fetch if needed)
    */
-  async _triggerEngineProviderAction(providerId, action) {
+  async _notifyEngineProviderChanged(providerId, action, providerConfig = null) {
     try {
       const axios = (await import('axios')).default;
-      const engineApiUrl = 'http://127.0.0.1:3002';
+      const engineApiUrl = process.env.ENGINE_API_URL || 'http://127.0.0.1:3002';
+      
       await axios.post(
-        `${engineApiUrl}/api/providers/${providerId}/action`,
-        { action },
+        `${engineApiUrl}/api/providers/${providerId}/changed`,
+        {
+          action,
+          providerId,
+          ...(providerConfig && { providerConfig })
+        },
         { timeout: 5000 }
       );
-      this.logger.info(`Triggered engine action '${action}' for provider ${providerId}`);
+      
+      this.logger.info(`Notified engine: provider ${providerId} ${action}`);
     } catch (error) {
-      this.logger.error(`Failed to trigger engine action for provider ${providerId}: ${error.message}`);
+      this.logger.error(`Failed to notify engine for provider ${providerId}: ${error.message}`);
       // Don't throw - provider operation should succeed even if engine notification fails
     }
   }

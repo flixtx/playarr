@@ -158,8 +158,28 @@ class CategoriesManager extends BaseManager {
         }
       );
 
-      // Trigger engine action for categories changed
-      await this._triggerEngineProviderAction(providerId, 'categories-changed');
+      // Perform cleanup for disabled categories
+      try {
+        // Remove provider from titles for disabled categories
+        const { titlesUpdated, streamsRemoved, titleKeys } = 
+          await this._database.removeProviderFromTitles(providerId, null, enabledCategories);
+        
+        // Delete titles without streams
+        const deletedEmptyTitles = await this._database.deleteTitlesWithoutStreams(titleKeys);
+        
+        this.logger.info(
+          `Provider ${providerId} categories changed cleanup: ${titlesUpdated} titles updated, ` +
+          `${streamsRemoved} streams removed, ${deletedEmptyTitles} empty titles deleted`
+        );
+      } catch (error) {
+        this.logger.error(`Error cleaning up categories for provider ${providerId}: ${error.message}`);
+      }
+
+      // Get updated provider config for engine
+      const updatedProvider = await this._getProviderById(providerId);
+
+      // Trigger engine notification for categories changed
+      await this._notifyEngineProviderChanged(providerId, 'categories-changed', updatedProvider);
 
       return {
         response: {
@@ -179,23 +199,30 @@ class CategoriesManager extends BaseManager {
   }
 
   /**
-   * Trigger engine provider action
+   * Notify engine of provider change
    * @private
    * @param {string} providerId - Provider ID
-   * @param {string} action - Action type: 'added' | 'deleted' | 'enabled' | 'disabled' | 'categories-changed'
+   * @param {string} action - Action type
+   * @param {Object} [providerConfig] - Optional provider config
    */
-  async _triggerEngineProviderAction(providerId, action) {
+  async _notifyEngineProviderChanged(providerId, action, providerConfig = null) {
     try {
       const axios = (await import('axios')).default;
-      const engineApiUrl = 'http://127.0.0.1:3002';
+      const engineApiUrl = process.env.ENGINE_API_URL || 'http://127.0.0.1:3002';
+      
       await axios.post(
-        `${engineApiUrl}/api/providers/${providerId}/action`,
-        { action },
+        `${engineApiUrl}/api/providers/${providerId}/changed`,
+        {
+          action,
+          providerId,
+          ...(providerConfig && { providerConfig })
+        },
         { timeout: 5000 }
       );
-      this.logger.info(`Triggered engine action '${action}' for provider ${providerId}`);
+      
+      this.logger.info(`Notified engine: provider ${providerId} ${action}`);
     } catch (error) {
-      this.logger.error(`Failed to trigger engine action for provider ${providerId}: ${error.message}`);
+      this.logger.error(`Failed to notify engine for provider ${providerId}: ${error.message}`);
       // Don't throw - category update should succeed even if engine notification fails
     }
   }
@@ -284,8 +311,11 @@ class CategoriesManager extends BaseManager {
         }
       );
 
-      // Trigger engine action for categories changed
-      await this._triggerEngineProviderAction(providerId, 'categories-changed');
+      // Get updated provider config for engine
+      const updatedProvider = await this._getProviderById(providerId);
+      
+      // Trigger engine notification for categories changed
+      await this._notifyEngineProviderChanged(providerId, 'categories-changed', updatedProvider);
 
       // Get updated category for response
       const collectionName = this._getCategoriesCollectionName(providerId);
