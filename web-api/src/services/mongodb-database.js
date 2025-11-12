@@ -622,6 +622,30 @@ class MongoDatabaseService {
         {},
         'provider_titles.provider_id + type'
       );
+      await this._createIndexIfNotExists(
+        providerTitlesCollection,
+        { provider_id: 1, ignored: 1 },
+        {},
+        'provider_titles.provider_id + ignored'
+      );
+      await this._createIndexIfNotExists(
+        providerTitlesCollection,
+        { provider_id: 1, category_id: 1 },
+        {},
+        'provider_titles.provider_id + category_id'
+      );
+      await this._createIndexIfNotExists(
+        providerTitlesCollection,
+        { provider_id: 1, tmdb_id: 1 },
+        {},
+        'provider_titles.provider_id + tmdb_id'
+      );
+      await this._createIndexIfNotExists(
+        providerTitlesCollection,
+        { provider_id: 1, lastUpdated: 1 },
+        {},
+        'provider_titles.provider_id + lastUpdated'
+      );
       
       // Create indexes for title_streams collection
       const titleStreamsCollection = this.db.collection('title_streams');
@@ -636,6 +660,60 @@ class MongoDatabaseService {
         { title_key: 1 },
         {},
         'title_streams.title_key'
+      );
+      await this._createIndexIfNotExists(
+        titleStreamsCollection,
+        { provider_id: 1, title_key: 1 },
+        {},
+        'title_streams.provider_id + title_key'
+      );
+      
+      // Create indexes for iptv_providers collection
+      const iptvProvidersCollection = this.db.collection('iptv_providers');
+      await this._createIndexIfNotExists(
+        iptvProvidersCollection,
+        { deleted: 1, priority: 1 },
+        {},
+        'iptv_providers.deleted + priority'
+      );
+      
+      // Create indexes for job_history collection
+      const jobHistoryCollection = this.db.collection('job_history');
+      await this._createIndexIfNotExists(
+        jobHistoryCollection,
+        { job_name: 1 },
+        {},
+        'job_history.job_name'
+      );
+      await this._createIndexIfNotExists(
+        jobHistoryCollection,
+        { status: 1 },
+        {},
+        'job_history.status'
+      );
+      await this._createIndexIfNotExists(
+        jobHistoryCollection,
+        { job_name: 1, provider_id: 1 },
+        {},
+        'job_history.job_name + provider_id'
+      );
+      
+      // Create indexes for settings collection
+      const settingsCollection = this.db.collection('settings');
+      await this._createIndexIfNotExists(
+        settingsCollection,
+        { lastUpdated: 1 },
+        {},
+        'settings.lastUpdated'
+      );
+      
+      // Create indexes for cache_policy collection
+      const cachePolicyCollection = this.db.collection('cache_policy');
+      await this._createIndexIfNotExists(
+        cachePolicyCollection,
+        { provider_id: 1 },
+        {},
+        'cache_policy.provider_id'
       );
       
       logger.info('MongoDB indexes checked/created');
