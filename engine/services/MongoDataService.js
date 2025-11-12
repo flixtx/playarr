@@ -119,81 +119,104 @@ export class MongoDataService {
   }
 
   /**
-   * Remove provider IDs from title stream sources
+   * Remove provider IDs from title stream sources using MongoDB aggregation pipeline
+   * More efficient: performs all filtering and updates directly in the database
    * @private
-   * @param {Array<Object>} titles - Array of title documents with streams property
    * @param {string|Array<string>|Set<string>} providerIds - Provider ID(s) to remove (single string, array, or Set)
    * @param {import('mongodb').Collection} collection - MongoDB collection for titles
-   * @param {boolean} [executeBulkOps=true] - Whether to execute bulk operations immediately
-   * @returns {Promise<{titlesUpdated: number, streamsRemoved: number, bulkOps: Array<Object>}>} Results and bulk operations
+   * @param {Array<string>} [titleKeys=null] - Optional: only update these title_keys (for efficiency)
+   * @returns {Promise<{titlesUpdated: number, streamsRemoved: number}>} Results
    */
-  async _removeProvidersFromTitleStreams(titles, providerIds, collection, executeBulkOps = true) {
-    // Normalize providerIds to Set
-    const providerIdSet = providerIds instanceof Set 
-      ? providerIds 
-      : new Set(Array.isArray(providerIds) ? providerIds : [providerIds]);
+  async _removeProvidersFromTitleStreams(providerIds, collection, titleKeys = null) {
+    // Normalize providerIds to array
+    const providerIdsArray = providerIds instanceof Set
+      ? Array.from(providerIds)
+      : Array.isArray(providerIds)
+      ? providerIds
+      : [providerIds];
 
-    let titlesUpdated = 0;
-    let streamsRemoved = 0;
-    const bulkOps = [];
+    if (providerIdsArray.length === 0) {
+      return { titlesUpdated: 0, streamsRemoved: 0 };
+    }
 
-    for (const title of titles) {
-      const streamsObj = title.streams || {};
-      let titleModified = false;
-      const updatedStreams = { ...streamsObj };
+    // Build query filter - only update titles that have streams
+    const queryFilter = {
+      streams: { $exists: true, $ne: {} }
+    };
 
-      for (const [streamKey, streamValue] of Object.entries(streamsObj)) {
-        if (streamValue && typeof streamValue === 'object' && Array.isArray(streamValue.sources)) {
-          const originalLength = streamValue.sources.length;
-          const filteredSources = streamValue.sources.filter(id => !providerIdSet.has(id));
+    // If titleKeys provided, only update those specific titles
+    if (titleKeys && titleKeys.length > 0) {
+      queryFilter.title_key = { $in: titleKeys };
+    }
 
-          if (filteredSources.length !== originalLength) {
-            if (filteredSources.length > 0) {
-              updatedStreams[streamKey] = {
-                ...streamValue,
-                sources: filteredSources
-              };
-            } else {
-              updatedStreams[streamKey] = undefined;
-            }
-            streamsRemoved += (originalLength - filteredSources.length);
-            titleModified = true;
-          }
-        }
-      }
-
-      // Remove undefined entries (streams with no sources left)
-      for (const key in updatedStreams) {
-        if (updatedStreams[key] === undefined) {
-          delete updatedStreams[key];
-        }
-      }
-
-      if (titleModified) {
-        titlesUpdated++;
-        bulkOps.push({
-          updateOne: {
-            filter: { title_key: title.title_key },
-            update: {
-              $set: {
-                streams: updatedStreams,
-                lastUpdated: new Date()
+    // Use MongoDB aggregation pipeline update
+    const result = await collection.updateMany(
+      queryFilter,
+      [
+        {
+          $set: {
+            streams: {
+              $arrayToObject: {
+                $map: {
+                  input: {
+                    $filter: {
+                      input: { $objectToArray: "$streams" },
+                      as: "stream",
+                      cond: {
+                        $and: [
+                          { $isArray: "$$stream.v.sources" },
+                          {
+                            $gt: [
+                              {
+                                $size: {
+                                  $filter: {
+                                    input: "$$stream.v.sources",
+                                    as: "src",
+                                    cond: { $not: { $in: ["$$src", providerIdsArray] } }
+                                  }
+                                }
+                              },
+                              0
+                            ]
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  as: "stream",
+                  in: {
+                    k: "$$stream.k",
+                    v: {
+                      $mergeObjects: [
+                        "$$stream.v",
+                        {
+                          sources: {
+                            $filter: {
+                              input: "$$stream.v.sources",
+                              as: "src",
+                              cond: { $not: { $in: ["$$src", providerIdsArray] } }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
               }
-            }
+            },
+            lastUpdated: new Date()
           }
-        });
-      }
-    }
+        }
+      ]
+    );
 
-    // Execute bulk update if requested
-    if (executeBulkOps && bulkOps.length > 0) {
-      for (let i = 0; i < bulkOps.length; i += this.batchSize) {
-        const batch = bulkOps.slice(i, i + this.batchSize);
-        await collection.bulkWrite(batch, { ordered: false });
-      }
-    }
-
-    return { titlesUpdated, streamsRemoved, bulkOps };
+    // Note: streamsRemoved count would require a separate aggregation to calculate exactly
+    // For now, return modifiedCount as titlesUpdated
+    // The actual streamsRemoved is tracked separately via title_streams deletion
+    return {
+      titlesUpdated: result.modifiedCount || 0,
+      streamsRemoved: 0 // Calculated separately in calling methods via title_streams deletion
+    };
   }
 
   /**
@@ -976,20 +999,18 @@ export class MongoDataService {
       // 2. Extract unique title_key values
       const titleKeys = [...new Set(streams.map(s => s.title_key))];
       
-      // 3. Fetch only affected titles
-      const titles = await this.db.collection('titles')
-        .find({ title_key: { $in: titleKeys } })
-        .toArray();
+      // 3. Delete title_streams for this provider
+      const deletedStreams = await this.db.collection('title_streams')
+        .deleteMany({ provider_id: providerId });
       
-      if (titles.length === 0) {
-        return { titlesUpdated: 0, streamsRemoved: 0 };
-      }
-      
-      // 4. Remove provider from title streams
+      // 4. Remove provider from title streams using optimized aggregation pipeline
       const collection = this.db.collection('titles');
-      const result = await this._removeProvidersFromTitleStreams(titles, providerId, collection);
+      const result = await this._removeProvidersFromTitleStreams(providerId, collection, titleKeys);
       
-      return { titlesUpdated: result.titlesUpdated, streamsRemoved: result.streamsRemoved };
+      return {
+        titlesUpdated: result.titlesUpdated,
+        streamsRemoved: deletedStreams.deletedCount || 0
+      };
     } catch (error) {
       logger.error(`Error removing provider from title sources: ${error.message}`);
       throw error;
@@ -1032,23 +1053,17 @@ export class MongoDataService {
       const titleKeysToClean = titleKeys.filter(key => titleKeysWithStreamsSet.has(key));
 
       // 5. Remove provider from titles.streams for titles that still have streams
+      // Use optimized aggregation pipeline - only update titles that still have streams
       let titlesUpdated = 0;
-      let streamsRemoved = 0;
-
       if (titleKeysToClean.length > 0) {
-        const titles = await this.db.collection('titles')
-          .find({ title_key: { $in: titleKeysToClean } })
-          .toArray();
-
         const collection = this.db.collection('titles');
-        const result = await this._removeProvidersFromTitleStreams(titles, providerIds, collection);
+        const result = await this._removeProvidersFromTitleStreams(providerIds, collection, titleKeysToClean);
         titlesUpdated = result.titlesUpdated;
-        streamsRemoved = result.streamsRemoved;
       }
 
       return {
         titlesUpdated,
-        streamsRemoved: streamsRemoved + (deletedStreams.deletedCount || 0),
+        streamsRemoved: deletedStreams.deletedCount || 0,
         titleKeys // Return all title_keys for checking titles without streams
       };
     } catch (error) {
@@ -1098,19 +1113,14 @@ export class MongoDataService {
           title_key: { $in: titleKeys }
         });
 
-      // 5. Remove provider from titles.streams for these title_keys
-      const titles = await this.db.collection('titles')
-        .find({ title_key: { $in: titleKeys } })
-        .toArray();
-
+      // 5. Remove provider from titles.streams using optimized aggregation pipeline
       const collection = this.db.collection('titles');
-      const result = await this._removeProvidersFromTitleStreams(titles, providerId, collection);
+      const result = await this._removeProvidersFromTitleStreams(providerId, collection, titleKeys);
       const titlesUpdated = result.titlesUpdated;
-      const streamsRemoved = result.streamsRemoved;
 
       return {
         titlesUpdated,
-        streamsRemoved: streamsRemoved + (deletedStreams.deletedCount || 0),
+        streamsRemoved: deletedStreams.deletedCount || 0,
         titleKeys // Return for checking titles without sources
       };
     } catch (error) {
@@ -1120,33 +1130,47 @@ export class MongoDataService {
   }
 
   /**
-   * Delete titles that have no streams left in title_streams collection
-   * More efficient: checks title_streams collection instead of titles.streams
-   * @param {Array<string>} titleKeys - Array of title_key values to check
+   * Delete titles that have no streams (optimized - checks titles.streams field directly)
+   * More efficient: uses MongoDB aggregation pipeline to check streams field directly
+   * @param {Array<string>} [titleKeys] - Optional: only check these title_keys (for efficiency)
    * @returns {Promise<number>} Number of deleted titles
    */
   async deleteTitlesWithoutStreams(titleKeys) {
     try {
-      if (!titleKeys || titleKeys.length === 0) {
-        return 0;
+      // Build query filter using MongoDB aggregation expression
+      const queryFilter = {
+        $expr: {
+          $or: [
+            // Case 1: streams missing or empty object
+            { $eq: [{ $size: { $objectToArray: { $ifNull: ["$streams", {}] } } }, 0] },
+            
+            // Case 2: all stream sources are empty
+            {
+              $allElementsTrue: {
+                $map: {
+                  input: { $objectToArray: { $ifNull: ["$streams", {}] } },
+                  as: "stream",
+                  in: {
+                    $or: [
+                      { $not: { $isArray: "$$stream.v.sources" } },
+                      { $eq: [{ $size: { $ifNull: ["$$stream.v.sources", []] } }, 0] }
+                    ]
+                  }
+                }
+              }
+            }
+          ]
+        }
+      };
+
+      // If titleKeys provided, add to filter
+      if (titleKeys && titleKeys.length > 0) {
+        queryFilter.title_key = { $in: titleKeys };
       }
 
-      // 1. Get all title_keys that still have streams in title_streams collection
-      const titleKeysWithStreams = await this.db.collection('title_streams')
-        .distinct('title_key', { title_key: { $in: titleKeys } });
-
-      const titleKeysWithStreamsSet = new Set(titleKeysWithStreams);
-
-      // 2. Find title_keys that have NO streams
-      const titleKeysToDelete = titleKeys.filter(key => !titleKeysWithStreamsSet.has(key));
-
-      if (titleKeysToDelete.length === 0) {
-        return 0;
-      }
-
-      // 3. Delete titles without streams
+      // Delete titles without streams using optimized aggregation pipeline
       const result = await this.db.collection('titles')
-        .deleteMany({ title_key: { $in: titleKeysToDelete } });
+        .deleteMany(queryFilter);
 
       return result.deletedCount || 0;
     } catch (error) {
