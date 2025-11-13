@@ -15,6 +15,9 @@ export class XtreamProvider extends BaseIPTVProvider {
    */
   constructor(providerData, cache, data, mongoData, tmdbProvider) {
     super(providerData, cache, data, mongoData, undefined, tmdbProvider);
+    
+    // Xtream supports categories
+    this.supportsCategories = true;
         
     /**
      * Configuration for each media type
@@ -67,39 +70,13 @@ export class XtreamProvider extends BaseIPTVProvider {
   }
 
   /**
-   * Check if a movie title should be skipped (already exists or category disabled)
+   * Check if a TV show title should be skipped (not modified)
    * @private
    * @param {TitleData} title - Title data to check
    * @param {Object|null} existingTitle - Existing title object from DB (null if doesn't exist)
-   * @param {Map<number, boolean>} categoryMap - Map of category ID to enabled status
    * @returns {boolean} True if title should be skipped
    */
-  _shouldSkipMovies(title, existingTitle, categoryMap) {
-    const config = this._typeConfig.movies;
-    
-    // Skip if already exists
-    if (existingTitle) {
-      return true;
-    }
-    
-    // Skip if category is disabled
-    const categoryId = title.category_id;
-    const categoryEnabled = categoryMap.get(categoryId) ?? false;
-    return !categoryEnabled;
-  }
-
-  /**
-   * Check if a TV show title should be skipped (not modified or category disabled)
-   * @private
-   * @param {TitleData} title - Title data to check
-   * @param {Object|null} existingTitle - Existing title object from DB (null if doesn't exist)
-   * @param {Map<number, boolean>} categoryMap - Map of category ID to enabled status
-   * @returns {boolean} True if title should be skipped
-   */
-  _shouldSkipTVShows(title, existingTitle, categoryMap) {
-    const config = this._typeConfig.tvshows;
-    const seriesId = title[config.idField];
-    
+  _shouldSkipTVShows(title, existingTitle) {
     // If title doesn't exist, process it
     if (!existingTitle) {
       return false;
@@ -117,32 +94,23 @@ export class XtreamProvider extends BaseIPTVProvider {
       }
     }
     
-    // Skip if category is disabled
-    const categoryId = title.category_id;
-    const categoryEnabled = categoryMap.get(categoryId) ?? false;
-    return !categoryEnabled;
+    return false;
   }
 
   /**
-   * Check if a live stream title should be skipped (already exists or category disabled)
+   * Check if a live stream title should be skipped (already exists)
    * @private
    * @param {TitleData} title - Title data to check
-   * @param {Set} existingTitleMap - Set of existing title IDs
-   * @param {Map<number, boolean>} categoryMap - Map of category ID to enabled status
+   * @param {Object|null} existingTitle - Existing title object from DB (null if doesn't exist)
    * @returns {boolean} True if title should be skipped
    */
-  _shouldSkipLive(title, existingTitleMap, categoryMap) {
-    const config = this._typeConfig.live;
-    
+  _shouldSkipLive(title, existingTitle) {
     // Skip if already exists
-    if (existingTitleMap.has(title[config.idField])) {
+    if (existingTitle) {
       return true;
     }
     
-    // Skip if category is disabled
-    const categoryId = title.category_id;
-    const categoryEnabled = categoryMap.get(categoryId) ?? false;
-    return !categoryEnabled;
+    return false;
   }
 
   /**
@@ -423,56 +391,6 @@ export class XtreamProvider extends BaseIPTVProvider {
     return titles;
   }
 
-  /**
-   * Filter titles based on existing titles and category enabled status
-   * @private
-   * @param {Array} titles - Array of raw title objects
-   * @param {string} type - Media type ('movies', 'tvshows', or 'live')
-   * @returns {Promise<Array>} Array of filtered title objects
-   */
-  async _filterTitles(titles, type) {
-    const config = this._typeConfig[type];
-    if (!config) {
-      throw new Error(`Unsupported type: ${type}`);
-    }
-
-    this.logger.debug(`${type}: Filtering titles`);
-
-    // Load existing titles and categories for filtering decisions
-    const existingTitles = this.loadTitles(type);
-    
-    // Create Map for O(1) lookup of existing titles (for ignored check)
-    const existingTitlesMap = new Map(existingTitles.map(t => [t.title_id, t]));
-
-    // Load categories for filtering
-    const categories = await this.loadCategories(type);
-    const categoryMap = new Map(categories.map(cat => [cat.category_id, cat.enabled]));
-
-    // Filter titles using existing shouldSkip function and ignore list
-    const filteredTitles = titles.filter(title => {
-      const titleId = title[config.idField];
-      
-      if (!titleId) {
-        return false;
-      }
-      
-      // Get existing title if it exists (O(1) lookup)
-      const existingTitle = existingTitlesMap.get(titleId);
-      
-      // Skip if exists and is ignored
-      if (existingTitle && existingTitle.ignored === true) {
-        this.logger.debug(`${type}: Skipping ignored title ${titleId}: ${existingTitle.ignored_reason || 'Unknown reason'}`);
-        return false;
-      }
-      
-      // Pass existing title object directly
-      return !config.shouldSkip(title, existingTitle, categoryMap);
-    });
-    
-    this.logger.info(`${type}: Filtered to ${filteredTitles.length} titles to process`);
-
-    return filteredTitles;
-  }
 
   /**
    * Process a single title: fetch extended info and clean title name

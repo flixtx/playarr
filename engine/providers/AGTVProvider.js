@@ -369,24 +369,6 @@ export class AGTVProvider extends BaseIPTVProvider {
   }
 
   /**
-   * Check if a movie title should be skipped (already exists)
-   * @private
-   * @param {TitleData} title - Title data to check
-   * @param {Set} existingTitleMap - Set of existing title IDs
-   * @returns {boolean} True if title should be skipped
-   */
-  _shouldSkipMovies(title, existingTitleMap) {
-    const config = this._typeConfig.movies;
-    
-    // Skip if already exists
-    if (existingTitleMap.has(title[config.idField])) {
-      return true;
-    }
-    
-    return false;
-  }
-
-  /**
    * Check if a TV show title should be skipped (compare stream keys)
    * @private
    * @param {TitleData} title - Title data from API
@@ -394,9 +376,6 @@ export class AGTVProvider extends BaseIPTVProvider {
    * @returns {boolean} True if title should be skipped
    */
   _shouldSkipTVShows(title, existingTitle) {
-    const config = this._typeConfig.tvshows;
-    const seriesId = title[config.idField];
-    
     // If title doesn't exist, process it
     if (!existingTitle) {
       return false;
@@ -414,58 +393,6 @@ export class AGTVProvider extends BaseIPTVProvider {
     return shouldSkip;
   }
 
-  /**
-   * Filter titles based on existing titles
-   * @private
-   * @param {Array} titles - Array of raw title objects
-   * @param {string} type - Media type ('movies' or 'tvshows')
-   * @returns {Promise<Array>} Array of filtered title objects
-   */
-  async _filterTitles(titles, type) {
-    const config = this._typeConfig[type];
-    if (!config) {
-      throw new Error(`Unsupported type: ${type}`);
-    }
-
-    this.logger.debug(`${type}: Filtering titles`);
-
-    // Load existing titles to check for duplicates
-    const existingTitles = this.loadTitles(type);
-    
-    // Create Map for O(1) lookup of existing titles (for ignored check and stream comparison)
-    const existingTitlesMap = new Map(existingTitles.map(t => [t.title_id, t]));
-    
-    // For movies, use Set (no stream comparison needed)
-    const existingTitleIds = new Set(existingTitles.map(t => t.title_id).filter(Boolean));
-
-    // Filter titles using shouldSkip function
-    const filteredTitles = titles.filter(title => {
-      const titleId = title[config.idField];
-      
-      if (!titleId) {
-        return false;
-      }
-      
-      // Get existing title if it exists (O(1) lookup)
-      const existingTitle = existingTitlesMap.get(titleId);
-      
-      // Skip if exists and is ignored
-      if (existingTitle && existingTitle.ignored === true) {
-        this.logger.debug(`${type}: Skipping ignored title ${titleId}: ${existingTitle.ignored_reason || 'Unknown reason'}`);
-        return false;
-      }
-      
-      // For TV shows, pass existing title object directly for stream comparison
-      // For movies, pass Set as before
-      const existingTitleParam = type === 'tvshows' ? existingTitle : existingTitleIds;
-      
-      return !config.shouldSkip(title, existingTitleParam);
-    });
-    
-    this.logger.info(`${type}: Filtered to ${filteredTitles.length} titles to process`);
-
-    return filteredTitles;
-  }
 
   /**
    * Process a single title: clean title name, match TMDB ID, build processed data, and push to processedTitles

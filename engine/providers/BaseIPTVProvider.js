@@ -66,6 +66,12 @@ export class BaseIPTVProvider extends BaseProvider {
      * @type {number}
      */
     this.metadataBatchSize = metadataBatchSize;
+    
+    /**
+     * Whether this provider supports categories
+     * @type {boolean}
+     */
+    this.supportsCategories = false;
   }
 
   /**
@@ -219,14 +225,92 @@ export class BaseIPTVProvider extends BaseProvider {
   }
 
   /**
-   * Filter titles based on provider-specific rules (provider-specific)
-   * @abstract
+   * Filter titles based on existing titles, ignored status, and category enabled status
+   * Generic implementation that handles common filtering logic
    * @param {Array} titles - Array of raw title objects
-   * @param {string} type - Media type ('movies' or 'tvshows')
+   * @param {string} type - Media type ('movies', 'tvshows', or 'live')
    * @returns {Promise<Array>} Array of filtered title objects
    */
   async _filterTitles(titles, type) {
-    throw new Error('_filterTitles(titles, type) must be implemented by subclass');
+    // Access _typeConfig from subclass (assumes it exists)
+    const config = this._typeConfig?.[type];
+    if (!config) {
+      throw new Error(`Unsupported type: ${type}`);
+    }
+
+    this.logger.debug(`${type}: Filtering titles`);
+
+    // Load existing titles and create lookup Map
+    const existingTitles = this.loadTitles(type);
+    const existingTitlesMap = new Map(existingTitles.map(t => [t.title_id, t]));
+
+    // Filter titles using generic checks and provider-specific shouldSkip
+    const filteredTitles = titles.filter(title => {
+      const titleId = title[config.idField];
+      
+      if (!titleId) {
+        return false;
+      }
+      
+      // Get existing title if it exists (O(1) lookup)
+      const existingTitle = existingTitlesMap.get(titleId);
+      
+      // Skip if exists and is ignored (generic check)
+      if (existingTitle && existingTitle.ignored === true) {
+        this.logger.debug(`${type}: Skipping ignored title ${titleId}: ${existingTitle.ignored_reason || 'Unknown reason'}`);
+        return false;
+      }
+      
+      // Skip if category is disabled or missing (generic check - only if provider supports categories)
+      if (this.supportsCategories) {
+        // Skip if title has no category_id when categories are supported
+        if (!title.category_id) {
+          return false;
+        }
+        // Skip if category is disabled
+        if (!this.isCategoryEnabled(type, title.category_id)) {
+          return false;
+        }
+      }
+      
+      // Call provider-specific shouldSkip (no category check here)
+      return !config.shouldSkip(title, existingTitle);
+    });
+    
+    this.logger.info(`${type}: Filtered to ${filteredTitles.length} titles to process`);
+
+    return filteredTitles;
+  }
+
+  /**
+   * Check if a movie title should be skipped (base implementation)
+   * Can be overridden by subclasses for provider-specific logic
+   * @private
+   * @param {TitleData} title - Title data to check
+   * @param {Object|null} existingTitle - Existing title object from DB (null if doesn't exist)
+   * @returns {boolean} True if title should be skipped
+   */
+  _shouldSkipMovies(title, existingTitle) {
+    const shouldSkip = existingTitle !== null;
+
+    return shouldSkip;
+  }
+
+  /**
+   * Check if a TV show title should be skipped (base implementation)
+   * Can be overridden by subclasses for provider-specific logic
+   * @private
+   * @param {TitleData} title - Title data to check
+   * @param {Object|null} existingTitle - Existing title object from DB (null if doesn't exist)
+   * @returns {boolean} True if title should be skipped
+   */
+  _shouldSkipTVShows(title, existingTitle) {
+    // If title doesn't exist, process it
+    if (!existingTitle) {
+      return false;
+    }
+    // Base implementation: don't skip if exists (subclasses can override for modification checks, etc.)
+    return false;
   }
 
   /**
