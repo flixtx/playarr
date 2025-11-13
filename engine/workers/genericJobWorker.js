@@ -42,7 +42,6 @@ export default async function(params = {}) {
     const context = ApplicationContext.getInstance();
     
     // Get initialized dependencies from context
-    const cache = context.getCache();
     const mongoData = context.getMongoData();
     const providers = context.getProviders();
     const tmdbProvider = context.getTMDBProvider();
@@ -60,7 +59,7 @@ export default async function(params = {}) {
     logger.debug(`Creating job instance: ${jobClassName}`);
     
     // Instantiate the job with dependencies
-    const job = new JobClass(cache, mongoData, providers, tmdbProvider);
+    const job = new JobClass(mongoData, providers, tmdbProvider);
     
     logger.debug(`Executing job: ${jobName}...`);
     

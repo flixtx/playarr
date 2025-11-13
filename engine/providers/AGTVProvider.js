@@ -1,6 +1,5 @@
 import axios from 'axios';
 import { BaseIPTVProvider } from './BaseIPTVProvider.js';
-import { serverApiClient } from '../utils/serverApiClient.js';
 
 /**
  * Apollo Group TV provider implementation
@@ -10,14 +9,12 @@ import { serverApiClient } from '../utils/serverApiClient.js';
 export class AGTVProvider extends BaseIPTVProvider {
   /**
    * @param {Object} providerData - Provider configuration data
-   * @param {import('../managers/StorageManager.js').StorageManager} cache - Storage manager instance for temporary cache
-   * @param {import('../managers/StorageManager.js').StorageManager} data - Storage manager instance for persistent data storage
    * @param {import('../services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service instance
    * @param {import('../providers/TMDBProvider.js').TMDBProvider} tmdbProvider - TMDB provider instance for matching TMDB IDs (required)
    */
-  constructor(providerData, cache, data, mongoData, tmdbProvider) {
+  constructor(providerData, mongoData, tmdbProvider) {
     // AGTV uses 10k batch size since everything is in-memory and extremely fast
-    super(providerData, cache, data, mongoData, 500, tmdbProvider);
+    super(providerData, mongoData, 500, tmdbProvider);
         
     /**
      * Configuration for each media type
@@ -45,14 +42,6 @@ export class AGTVProvider extends BaseIPTVProvider {
     };
   }
 
-  /**
-   * Get default cache policies for AGTV provider
-   * Cache policies are now handled by server, return empty object
-   * @returns {Object} Empty cache policy object
-   */
-  getDefaultCachePolicies() {
-    return {};
-  }
 
   /**
    * @returns {string} 'agtv'
@@ -222,45 +211,6 @@ export class AGTVProvider extends BaseIPTVProvider {
   }
 
   /**
-   * Fetch M3U8 content from cache or API
-   * @private
-   * @param {string} url - URL to fetch
-   * @param {string[]} cacheKeyParts - Cache key parts for storing/retrieving
-   * @param {number|null} [maxAgeHours=6] - Maximum cache age in hours (default 6h for M3U8)
-   * @returns {Promise<string>} M3U8 content as string
-   */
-  async _fetchM3U8WithCache(url, cacheKeyParts, maxAgeHours = 6) {
-    // Check cache first - verify it exists AND is not expired
-    const cached = this.cache.getText(...cacheKeyParts);
-    if (cached) {
-      // Check if cache is expired based on policy
-      const isExpired = this.cache.isExpired(...cacheKeyParts);
-      if (!isExpired) {
-        this.logger.debug(`Loading M3U8 from cache: ${cacheKeyParts.join('/')}`);
-        return cached;
-      } else {
-        this.logger.debug(`M3U8 cache expired for: ${cacheKeyParts.join('/')}, fetching fresh data`);
-      }
-    }
-
-    // Fetch from API with rate limiting
-    this.logger.debug(`Fetching M3U8 from API: ${url}`);
-    const response = await this.limiter.schedule(() => axios.get(url, {
-      responseType: 'text',
-      timeout: 30000,
-    }));
-
-    // Cache the response with TTL
-    if (cacheKeyParts.length > 0) {
-      // Convert Infinity to null for JSON storage
-      const ttl = maxAgeHours === Infinity ? null : maxAgeHours;
-      await this.cache.setText(response.data, ttl, ...cacheKeyParts);
-    }
-
-    return response.data;
-  }
-
-  /**
    * Build M3U8 URL for a media type and optional page
    * @private
    * @param {string} type - Media type ('movies' or 'tvshows')
@@ -304,8 +254,15 @@ export class AGTVProvider extends BaseIPTVProvider {
 
       while (true) {
         try {
-          // Fetch M3U8 content from server API
-          const m3u8Content = await serverApiClient.fetchM3U8(this.providerId, type, page);
+          // Fetch M3U8 content from server API (rate limited)
+          let endpoint = `/api/provider/${this.providerId}/m3u8?type=${type}`;
+          if (page) {
+            endpoint += `&page=${page}`;
+          }
+          this.logger.debug(`Fetching M3U8 from server: ${this.providerId}/${type}${page ? `/${page}` : ''}`);
+          const m3u8Content = await this._makeGetRequestWithLimiter(endpoint, {
+            responseType: 'text'
+          });
 
           const { titles, streamCount } = this._parseM3U8Content(m3u8Content, type);
 
@@ -337,8 +294,12 @@ export class AGTVProvider extends BaseIPTVProvider {
     } else {
       // Single endpoint (movies)
       try {
-        // Fetch M3U8 content from server API
-        const m3u8Content = await serverApiClient.fetchM3U8(this.providerId, type);
+        // Fetch M3U8 content from server API (rate limited)
+        const endpoint = `/api/provider/${this.providerId}/m3u8?type=${type}`;
+        this.logger.debug(`Fetching M3U8 from server: ${this.providerId}/${type}`);
+        const m3u8Content = await this._makeGetRequestWithLimiter(endpoint, {
+          responseType: 'text'
+        });
 
         const { titles } = this._parseM3U8Content(m3u8Content, type);
         allTitles.push(...titles);

@@ -1,16 +1,10 @@
 import { createLogger } from '../utils/logger.js';
-import axios from 'axios';
 import Bottleneck from 'bottleneck';
-import fs from 'fs-extra';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import axios from 'axios';
 
 /**
  * Base class for all providers (IPTV, TMDB, etc.)
- * Provides generic API communication, caching, and data storage functionality
+ * Provides generic API communication and rate limiting functionality
  * @abstract
  */
 export class BaseProvider {
@@ -41,12 +35,10 @@ export class BaseProvider {
 
   /**
    * @param {Object} providerData - Provider configuration data
-   * @param {import('../managers/StorageManager.js').StorageManager} cache - Storage manager instance for temporary cache
    * @param {string} [loggerContext] - Optional logger context override
    */
-  constructor(providerData, cache, loggerContext = null) {
+  constructor(providerData, loggerContext = null) {
     this.providerData = providerData;
-    this.cache = cache;
     this.providerId = providerData.id || 'default';
 
     // Create logger with custom context or default to provider type
@@ -75,9 +67,6 @@ export class BaseProvider {
     
     // Single progress interval per provider instance
     this._progressInterval = null;
-    
-    // In-memory cache for this provider's policies
-    this._cachePolicies = null; // Will be loaded via initializeCachePolicies()
   }
 
   /**
@@ -183,117 +172,74 @@ export class BaseProvider {
   }
 
   /**
-   * Get default cache policies for this provider
-   * Override in subclasses to define provider-specific policies
-   * @returns {Object} Cache policy object with key-value pairs
+   * Read application token from environment variable
+   * @private
+   * @returns {string|null} Application token or null if not set
    */
-  getDefaultCachePolicies() {
-    // Base implementation returns empty - subclasses should override
-    return {};
+  _readApplicationToken() {
+    const token = process.env.APPLICATION_TOKEN;
+    if (!token) {
+      this.logger.warn('APPLICATION_TOKEN environment variable not set');
+      return null;
+    }
+    return token.trim();
   }
 
   /**
-   * Initialize cache policies for this provider
-   * Loads from MongoDB, creates defaults if missing
-   * Must be called after construction
-   * @returns {Promise<void>}
+   * Make GET request to server API with application token
+   * @private
+   * @param {string} endpoint - API endpoint
+   * @param {Object} [options] - Additional axios options
+   * @returns {Promise<any>} Response data
    */
-  async initializeCachePolicies() {
-    if (!this.cache || !this.cache.mongoData) {
-      this.logger.warn('Cache manager or MongoDB not available, skipping cache policy initialization');
-      this._cachePolicies = {};
-      return;
-    }
-
-    try {
-      const defaultPolicies = this.getDefaultCachePolicies();
-      if (Object.keys(defaultPolicies).length === 0) {
-        // No policies defined for this provider
-        this._cachePolicies = {};
-        return;
-      }
-
-      // Get existing policies from MongoDB for this provider's keys
-      const existingPolicies = await this.cache.mongoData.getCachePolicies();
-      
-      // Filter to only this provider's policies
-      const providerPolicies = {};
-      const policiesToCreate = {};
-      
-      for (const [key, defaultValue] of Object.entries(defaultPolicies)) {
-        if (existingPolicies.hasOwnProperty(key)) {
-          // Policy exists in MongoDB, use it
-          providerPolicies[key] = existingPolicies[key];
-        } else {
-          // Policy doesn't exist, use default and create it
-          providerPolicies[key] = defaultValue;
-          policiesToCreate[key] = defaultValue;
-        }
-      }
-
-      // Create missing policies in MongoDB
-      if (Object.keys(policiesToCreate).length > 0) {
-        this.logger.info(`Initializing ${Object.keys(policiesToCreate).length} cache policies for ${this.providerId}`);
-        const promises = Object.entries(policiesToCreate).map(([key, value]) =>
-          this.cache.mongoData.updateCachePolicy(key, value, this.providerId)
-        );
-        await Promise.all(promises);
-      }
-
-      // Store in provider's memory
-      this._cachePolicies = providerPolicies;
-      
-      // Also register with StorageManager's shared cache
-      if (this.cache.registerCachePolicies) {
-        this.cache.registerCachePolicies(providerPolicies);
-      }
-
-      this.logger.debug(`Cache policies initialized for ${this.providerId}: ${Object.keys(providerPolicies).length} policies`);
-    } catch (error) {
-      this.logger.error(`Error initializing cache policies: ${error.message}`);
-      // Fallback to defaults in memory
-      this._cachePolicies = this.getDefaultCachePolicies();
-    }
-  }
-
-  /**
-   * Fetch data from API with caching support
-   * Checks cache first and validates expiration based on cache-policy.json, then fetches from API if cache doesn't exist, is expired, or forceRefresh is true
-   * @param {string} url - API URL to fetch from
-   * @param {string[]} cacheKeyParts - Cache key parts array (e.g., [providerId, 'metadata', 'movies.json'])
-   * @param {number|null} [ttlHours=1] - TTL in hours (null for Infinity). Used to update cache policy.
-   * @param {boolean} [forceRefresh=false] - Force refresh even if cache exists
-   * @param {Object} [options] - Additional axios options (headers, etc.)
-   * @returns {Promise<Object>} API response data
-   */
-  async fetchWithCache(url, cacheKeyParts, ttlHours = 1, forceRefresh = false, options = {}) {
-    // Convert Infinity to null for JSON storage
-    const ttl = ttlHours === Infinity ? null : ttlHours;
-
-    // Check cache first - verify it exists AND is not expired
-    if (!forceRefresh && cacheKeyParts.length > 0) {
-      const cached = this.cache.get(...cacheKeyParts);
-      if (cached) {
-        // Check if cache is expired based on policy
-        const isExpired = this.cache.isExpired(...cacheKeyParts);
-        if (!isExpired) {
-          this.logger.debug(`Loading from cache: ${cacheKeyParts.join('/')}`);
-          return cached;
-        } else {
-          this.logger.debug(`Cache expired for: ${cacheKeyParts.join('/')}, fetching fresh data`);
-        }
-      }
-    }
-
-    this.logger.debug(`Fetching from API: ${url}`);
-    // Wrap API call with rate limiter
-    const response = await this.limiter.schedule(() => axios.get(url, options));
+  async _makeGetRequest(endpoint, options = {}) {
+    const token = this._readApplicationToken();
     
-    if (cacheKeyParts.length > 0) {
-      // Pass TTL to cache.set() to update policy (now async)
-      await this.cache.set(response.data, ttl, ...cacheKeyParts);
+    if (!token) {
+      throw new Error('Application token not available');
     }
-
-    return response.data;
+    
+    const SERVER_API_URL = `http://127.0.0.1:${process.env.PORT || 3000}`;
+    const url = `${SERVER_API_URL}${endpoint}`;
+    const headers = {
+      'X-Application-Token': token,
+      ...options.headers
+    };
+    
+    try {
+      const response = await axios({
+        method: 'GET',
+        url,
+        headers,
+        ...options
+      });
+      
+      return response.data;
+    } catch (error) {
+      if (error.response) {
+        // Server responded with error status
+        const status = error.response.status;
+        const message = error.response.data?.error || error.message;
+        throw new Error(`Server API error (${status}): ${message}`);
+      } else if (error.request) {
+        // Request made but no response
+        throw new Error(`Server API request failed: ${error.message}`);
+      } else {
+        // Error setting up request
+        throw new Error(`Server API error: ${error.message}`);
+      }
+    }
   }
+
+  /**
+   * Make GET request to server API with rate limiting
+   * @private
+   * @param {string} endpoint - API endpoint
+   * @param {Object} [options] - Additional axios options
+   * @returns {Promise<any>} Response data
+   */
+  async _makeGetRequestWithLimiter(endpoint, options = {}) {
+    return await this.limiter.schedule(() => this._makeGetRequest(endpoint, options));
+  }
+
 }

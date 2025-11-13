@@ -1,5 +1,4 @@
 import { BaseIPTVProvider } from './BaseIPTVProvider.js';
-import { serverApiClient } from '../utils/serverApiClient.js';
 
 /**
  * Xtream Codec provider implementation
@@ -9,13 +8,11 @@ import { serverApiClient } from '../utils/serverApiClient.js';
 export class XtreamProvider extends BaseIPTVProvider {
   /**
    * @param {Object} providerData - Provider configuration data
-   * @param {import('../managers/StorageManager.js').StorageManager} cache - Storage manager instance for temporary cache
-   * @param {import('../managers/StorageManager.js').StorageManager} data - Storage manager instance for persistent data storage
    * @param {import('../services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service instance
    * @param {import('../providers/TMDBProvider.js').TMDBProvider} tmdbProvider - TMDB provider instance for matching TMDB IDs (required)
    */
-  constructor(providerData, cache, data, mongoData, tmdbProvider) {
-    super(providerData, cache, data, mongoData, undefined, tmdbProvider);
+  constructor(providerData, mongoData, tmdbProvider) {
+    super(providerData, mongoData, undefined, tmdbProvider);
     
     // Xtream supports categories
     this.supportsCategories = true;
@@ -31,7 +28,6 @@ export class XtreamProvider extends BaseIPTVProvider {
         categoryAction: 'get_vod_categories',
         metadataAction: 'get_vod_streams',
         dataKey: 'movie_data',
-        cacheKey: 'movies',
         extendedInfoAction: 'get_vod_info',
         extendedInfoParam: 'vod_id',
         idField: 'stream_id',
@@ -45,7 +41,6 @@ export class XtreamProvider extends BaseIPTVProvider {
         categoryAction: 'get_series_categories',
         metadataAction: 'get_series',
         dataKey: 'series_data',
-        cacheKey: 'series',
         extendedInfoAction: 'get_series_info',
         extendedInfoParam: 'series_id',
         idField: 'series_id',
@@ -59,7 +54,6 @@ export class XtreamProvider extends BaseIPTVProvider {
         categoryAction: 'get_live_categories',
         metadataAction: 'get_live_streams',
         dataKey: 'streams',
-        cacheKey: 'live',
         extendedInfoAction: null, // Live streams may not have extended info
         extendedInfoParam: null,
         idField: 'stream_id',
@@ -236,15 +230,6 @@ export class XtreamProvider extends BaseIPTVProvider {
   }
 
   /**
-   * Get default cache policies for Xtream provider
-   * Cache policies are now handled by server, return empty object
-   * @returns {Object} Empty cache policy object
-   */
-  getDefaultCachePolicies() {
-    return {};
-  }
-
-  /**
    * @returns {string} 'xtream'
    * @override
    */
@@ -294,8 +279,10 @@ export class XtreamProvider extends BaseIPTVProvider {
       return [];
     }
 
-    // Fetch metadata from server API
-    const response = await serverApiClient.fetchMetadata(this.providerId, type);
+    // Fetch metadata from server API (rate limited)
+    const endpoint = `/api/provider/${this.providerId}/metadata?type=${type}`;
+    this.logger.debug(`Fetching metadata from server: ${this.providerId}/${type}`);
+    const response = await this._makeGetRequestWithLimiter(endpoint);
     
     // Extract array from response (Xtream API may return object with dataKey or array directly)
     let titles = [];
@@ -339,12 +326,10 @@ export class XtreamProvider extends BaseIPTVProvider {
       try {
         this.logger.debug(`${type}: Fetching extended info for title ${titleId}`);
 
-        // Fetch extended info from server API
-        const fullResponseData = await serverApiClient.fetchExtendedInfo(
-          this.providerId,
-          type,
-          titleId
-        );
+        // Fetch extended info from server API (rate limited)
+        const endpoint = `/api/provider/${this.providerId}/extended/${titleId}?type=${type}`;
+        this.logger.debug(`Fetching extended info from server: ${this.providerId}/${type}/${titleId}`);
+        const fullResponseData = await this._makeGetRequestWithLimiter(endpoint);
 
         if (config.parseExtendedInfo) {
           config.parseExtendedInfo(titleData, fullResponseData);

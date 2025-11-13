@@ -31,14 +31,12 @@ import { generateTitleKey, generateCategoryKey } from '../utils/titleUtils.js';
 export class BaseIPTVProvider extends BaseProvider { 
   /**
    * @param {Object} providerData - Provider configuration data
-   * @param {import('../managers/StorageManager.js').StorageManager} cache - Storage manager instance for temporary cache
-   * @param {import('../managers/StorageManager.js').StorageManager} [data] - Storage manager instance for persistent data storage (legacy, unused)
    * @param {import('../services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service instance
    * @param {number} [metadataBatchSize=100] - Batch size for processing metadata (default: 100)
    * @param {import('../providers/TMDBProvider.js').TMDBProvider} tmdbProvider - TMDB provider instance for matching TMDB IDs (required)
    */
-  constructor(providerData, cache, data, mongoData, metadataBatchSize = 100, tmdbProvider) {
-    super(providerData, cache);
+  constructor(providerData, mongoData, metadataBatchSize = 100, tmdbProvider) {
+    super(providerData);
     
     if (!mongoData) {
       throw new Error('MongoDataService is required');
@@ -177,7 +175,7 @@ export class BaseIPTVProvider extends BaseProvider {
 
         this.logger.debug(`${type}: Starting batch ${batchIndex + 1}/${batches.length} (titles ${batchStart}-${batchEnd})`);
 
-        // Process batch titles in parallel (rate limiting happens inside fetchWithCache)
+        // Process batch titles in parallel (rate limiting happens in provider-specific methods via limiter.schedule())
         const batchPromises = batch.map(title => 
           this._processSingleTitle(title, type, processedTitles)
         );
@@ -506,14 +504,12 @@ export class BaseIPTVProvider extends BaseProvider {
 
   /**
    * Load titles metadata for a specific type
-   * Loads from consolidated file: data/titles/{providerId}.titles.json
+   * Loads from in-memory cache (populated from MongoDB)
    * Filters titles by type property
-   * Can use cache if available for better performance
    * @param {string} type - Title type ('movies' or 'tvshows')
    * @returns {TitleData[]} Array of title data objects filtered by type
    */
   loadTitles(type) {
-    // Use cache if available, otherwise load from disk
     const allTitles = this.getAllTitles();
     // Filter titles by type property
     return allTitles.filter(t => t.type === type);
@@ -648,15 +644,13 @@ export class BaseIPTVProvider extends BaseProvider {
   }
 
   /**
-   * Load ignored titles from consolidated JSON file
-   * Loads from: data/titles/{providerId}.ignored.json
+   * Load ignored titles for a specific type
+   * Loads from in-memory cache (populated from MongoDB)
    * Filters by type and returns title_id mappings for backward compatibility
-   * Can use cache if available for better performance
    * @param {string} type - Media type ('movies' or 'tvshows')
    * @returns {Object<string, string>} Object mapping title_id to reason for ignoring
    */
   loadIgnoredTitles(type) {
-    // Use cache if available, otherwise load from disk
     const allIgnored = this.getAllIgnored();
     
     // Filter by type and convert title_key back to title_id for backward compatibility
@@ -775,7 +769,6 @@ export class BaseIPTVProvider extends BaseProvider {
    */
   async updateConfiguration(providerConfig) {
     this.providerData = providerConfig;
-    await this.initializeCachePolicies();
     this.logger.info(`Updated configuration for provider ${this.providerId}`);
   }
 

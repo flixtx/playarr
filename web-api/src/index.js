@@ -154,7 +154,7 @@ async function initialize() {
     const categoriesManager = new CategoriesManager(database, providersManager);
     const streamManager = new StreamManager(database);
     const playlistManager = new PlaylistManager(database);
-    const tmdbManager = new TMDBManager(database, settingsManager);
+    const tmdbManager = new TMDBManager(database, settingsManager, providerApiStorage);
     const xtreamManager = new XtreamManager(database, titlesManager);
 
     // Initialize user manager (creates default admin user)

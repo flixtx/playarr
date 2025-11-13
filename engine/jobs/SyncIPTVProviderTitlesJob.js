@@ -8,13 +8,12 @@ import { BaseJob } from './BaseJob.js';
  */
 export class SyncIPTVProviderTitlesJob extends BaseJob {
   /**
-   * @param {import('../managers/StorageManager.js').StorageManager} cache - Storage manager instance for temporary cache
    * @param {import('../services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service instance
    * @param {Map<string, import('../providers/BaseIPTVProvider.js').BaseIPTVProvider>} providers - Map of providerId -> provider instance (already initialized)
    * @param {import('../providers/TMDBProvider.js').TMDBProvider} tmdbProvider - TMDB provider singleton instance
    */
-  constructor(cache, mongoData, providers, tmdbProvider) {
-    super('SyncIPTVProviderTitlesJob', cache, mongoData, providers, tmdbProvider);
+  constructor(mongoData, providers, tmdbProvider) {
+    super('SyncIPTVProviderTitlesJob', mongoData, providers, tmdbProvider);
   }
 
   /**

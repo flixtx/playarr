@@ -12,8 +12,6 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const CACHE_DIR = process.env.CACHE_DIR || path.join(__dirname, "../cache");
-
 // Rotate log file on startup - rename previous log to engine-previous.log
 const logsDir = process.env.LOGS_DIR || path.join(__dirname, "../logs");
 const engineLogPath = path.join(logsDir, "engine.log");
@@ -46,8 +44,8 @@ async function main() {
   logger.info("Starting Playarr Engine...");
 
   try {
-    // Initialize ApplicationContext (MongoDB, Cache, TMDBProvider, IPTV Providers)
-    await ApplicationContext.initialize(CACHE_DIR);
+    // Initialize ApplicationContext (MongoDB, TMDBProvider, IPTV Providers)
+    await ApplicationContext.initialize();
     const context = ApplicationContext.getInstance();
     const mongoData = context.getMongoData();
 

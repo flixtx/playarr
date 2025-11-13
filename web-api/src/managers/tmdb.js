@@ -13,10 +13,12 @@ class TMDBManager extends BaseManager {
   /**
    * @param {import('../services/database.js').DatabaseService} database - Database service instance
    * @param {import('./settings.js').SettingsManager} settingsManager - Settings manager instance
+   * @param {import('../services/providerApiStorage.js').ProviderApiStorage} providerApiStorage - Provider API storage instance for caching
    */
-  constructor(database, settingsManager) {
+  constructor(database, settingsManager, providerApiStorage) {
     super('TMDBManager', database);
     this._settingsManager = settingsManager;
+    this._providerApiStorage = providerApiStorage;
     this._tmdbTokenKey = TMDB_TOKEN_KEY;
   }
 
@@ -395,6 +397,261 @@ class TMDBManager extends BaseManager {
         response: { error: `Failed to get TMDB movie stream: ${error.message}` },
         statusCode: 500,
       };
+    }
+  }
+
+  /**
+   * Search for movies or TV shows by title
+   * @param {string} type - Media type: 'movie' or 'tv'
+   * @param {string} title - Title to search for
+   * @param {number|null} year - Optional release year
+   * @returns {Promise<Object>} TMDB search results
+   */
+  async search(type, title, year = null) {
+    try {
+      // Check cache first
+      const cached = this._providerApiStorage.get('tmdb', type, 'tmdb-search', { title, year });
+      if (cached !== null) {
+        this.logger.debug(`Cache hit for TMDB search: ${type}/${title}/${year || 'no-year'}`);
+        return cached;
+      }
+
+      // Get API key from settings
+      const apiKeyResult = await this._settingsManager.getSetting(this._tmdbTokenKey);
+      if (apiKeyResult.statusCode !== 200 || !apiKeyResult.response.value) {
+        throw new Error('TMDB API key not configured');
+      }
+
+      const apiKey = apiKeyResult.response.value;
+      const endpoint = type === 'movie' ? '/search/movie' : '/search/tv';
+      const params = new URLSearchParams({ query: title });
+      
+      if (year) {
+        if (type === 'movie') {
+          params.set('year', year);
+        } else {
+          params.set('first_air_date_year', year);
+        }
+      }
+
+      const url = `${TMDB_API_URL}${endpoint}?${params.toString()}`;
+      const headers = {
+        'Authorization': `Bearer ${apiKey}`,
+        'Accept': 'application/json'
+      };
+
+      this.logger.debug(`Fetching from TMDB API: ${url}`);
+      const response = await fetch(url, { headers });
+
+      if (!response.ok) {
+        const responseData = await response.json();
+        throw new Error(responseData.status_message || `TMDB API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      // Cache the result
+      this._providerApiStorage.set('tmdb', type, 'tmdb-search', data, { title, year });
+      
+      return data;
+    } catch (error) {
+      this.logger.error(`Error searching TMDB ${type} "${title}": ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Find TMDB ID by IMDB ID
+   * @param {string} imdbId - IMDB ID (e.g., 'tt0133093')
+   * @param {string} type - Media type ('movies' or 'tvshows')
+   * @returns {Promise<Object>} TMDB find results
+   */
+  async findByIMDBId(imdbId, type) {
+    try {
+      // Check cache first
+      const cached = this._providerApiStorage.get('tmdb', type, 'tmdb-find', { imdbId });
+      if (cached !== null) {
+        this.logger.debug(`Cache hit for TMDB find by IMDB: ${imdbId}/${type}`);
+        return cached;
+      }
+
+      // Get API key from settings
+      const apiKeyResult = await this._settingsManager.getSetting(this._tmdbTokenKey);
+      if (apiKeyResult.statusCode !== 200 || !apiKeyResult.response.value) {
+        throw new Error('TMDB API key not configured');
+      }
+
+      const apiKey = apiKeyResult.response.value;
+      const url = `${TMDB_API_URL}/find/${imdbId}?external_source=imdb_id`;
+      const headers = {
+        'Authorization': `Bearer ${apiKey}`,
+        'Accept': 'application/json'
+      };
+
+      this.logger.debug(`Fetching from TMDB API: ${url}`);
+      const response = await fetch(url, { headers });
+
+      if (!response.ok) {
+        const responseData = await response.json();
+        throw new Error(responseData.status_message || `TMDB API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      // Cache the result
+      this._providerApiStorage.set('tmdb', type, 'tmdb-find', data, { imdbId });
+      
+      return data;
+    } catch (error) {
+      this.logger.error(`Error finding TMDB by IMDB ID ${imdbId}: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Get details by TMDB ID
+   * @param {string} type - Media type: 'movie' or 'tv'
+   * @param {number} tmdbId - TMDB ID
+   * @returns {Promise<Object>} Media details
+   */
+  async getDetails(type, tmdbId) {
+    try {
+      // Check cache first
+      const cached = this._providerApiStorage.get('tmdb', type, 'tmdb-details', { tmdbId });
+      if (cached !== null) {
+        this.logger.debug(`Cache hit for TMDB details: ${type}/${tmdbId}`);
+        return cached;
+      }
+
+      // Get API key from settings
+      const apiKeyResult = await this._settingsManager.getSetting(this._tmdbTokenKey);
+      if (apiKeyResult.statusCode !== 200 || !apiKeyResult.response.value) {
+        throw new Error('TMDB API key not configured');
+      }
+
+      const apiKey = apiKeyResult.response.value;
+      const endpoint = type === 'movie' ? `/movie/${tmdbId}` : `/tv/${tmdbId}`;
+      const url = `${TMDB_API_URL}${endpoint}`;
+      const headers = {
+        'Authorization': `Bearer ${apiKey}`,
+        'Accept': 'application/json'
+      };
+
+      this.logger.debug(`Fetching from TMDB API: ${url}`);
+      const response = await fetch(url, { headers });
+
+      if (!response.ok) {
+        const responseData = await response.json();
+        throw new Error(responseData.status_message || `TMDB API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      // Cache the result
+      this._providerApiStorage.set('tmdb', type, 'tmdb-details', data, { tmdbId });
+      
+      return data;
+    } catch (error) {
+      this.logger.error(`Error getting TMDB details for ${type} ${tmdbId}: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Get TV show season details
+   * @param {number} tmdbId - TMDB TV show ID
+   * @param {number} seasonNumber - Season number
+   * @returns {Promise<Object>} Season details
+   */
+  async getSeasonDetails(tmdbId, seasonNumber) {
+    try {
+      // Check cache first
+      const cached = this._providerApiStorage.get('tmdb', 'tv', 'tmdb-season', { tmdbId, seasonNumber });
+      if (cached !== null) {
+        this.logger.debug(`Cache hit for TMDB season: ${tmdbId}/S${seasonNumber}`);
+        return cached;
+      }
+
+      // Get API key from settings
+      const apiKeyResult = await this._settingsManager.getSetting(this._tmdbTokenKey);
+      if (apiKeyResult.statusCode !== 200 || !apiKeyResult.response.value) {
+        throw new Error('TMDB API key not configured');
+      }
+
+      const apiKey = apiKeyResult.response.value;
+      const url = `${TMDB_API_URL}/tv/${tmdbId}/season/${seasonNumber}`;
+      const headers = {
+        'Authorization': `Bearer ${apiKey}`,
+        'Accept': 'application/json'
+      };
+
+      this.logger.debug(`Fetching from TMDB API: ${url}`);
+      const response = await fetch(url, { headers });
+
+      if (!response.ok) {
+        const responseData = await response.json();
+        throw new Error(responseData.status_message || `TMDB API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      // Cache the result (6 hours TTL)
+      this._providerApiStorage.set('tmdb', 'tv', 'tmdb-season', data, { tmdbId, seasonNumber });
+      
+      return data;
+    } catch (error) {
+      this.logger.error(`Error getting TMDB season details for ${tmdbId}/S${seasonNumber}: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Get similar movies or TV shows
+   * @param {string} type - Media type: 'movie' or 'tv'
+   * @param {number} tmdbId - TMDB ID
+   * @param {number} page - Page number (default: 1)
+   * @returns {Promise<Object>} Similar media results
+   */
+  async getSimilar(type, tmdbId, page = 1) {
+    try {
+      // Check cache first
+      const cached = this._providerApiStorage.get('tmdb', type, 'tmdb-similar', { tmdbId, page });
+      if (cached !== null) {
+        this.logger.debug(`Cache hit for TMDB similar: ${type}/${tmdbId}/${page}`);
+        return cached;
+      }
+
+      // Get API key from settings
+      const apiKeyResult = await this._settingsManager.getSetting(this._tmdbTokenKey);
+      if (apiKeyResult.statusCode !== 200 || !apiKeyResult.response.value) {
+        throw new Error('TMDB API key not configured');
+      }
+
+      const apiKey = apiKeyResult.response.value;
+      const endpoint = type === 'movie' ? `/movie/${tmdbId}/similar` : `/tv/${tmdbId}/similar`;
+      const url = `${TMDB_API_URL}${endpoint}?page=${page}`;
+      const headers = {
+        'Authorization': `Bearer ${apiKey}`,
+        'Accept': 'application/json'
+      };
+
+      this.logger.debug(`Fetching from TMDB API: ${url}`);
+      const response = await fetch(url, { headers });
+
+      if (!response.ok) {
+        const responseData = await response.json();
+        throw new Error(responseData.status_message || `TMDB API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      // Cache the result
+      this._providerApiStorage.set('tmdb', type, 'tmdb-similar', data, { tmdbId, page });
+      
+      return data;
+    } catch (error) {
+      this.logger.error(`Error getting TMDB similar for ${type} ${tmdbId}: ${error.message}`);
+      throw error;
     }
   }
 }

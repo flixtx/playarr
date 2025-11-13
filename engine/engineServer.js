@@ -198,35 +198,6 @@ class EngineServer {
       }
     });
 
-    /**
-     * POST /api/settings/monitor
-     * Trigger settings monitor job manually
-     */
-    this._app.post('/api/settings/monitor', async (req, res) => {
-      try {
-        logger.info('Manual trigger requested for settings monitor job');
-        
-        const validation = await this._jobsManager.canRunJob('settingsMonitor');
-        
-        if (!validation.canRun) {
-          return res.status(409).json({ 
-            error: validation.reason,
-            status: 'blocked',
-            blockingJobs: validation.blockingJobs
-          });
-        }
-
-        await this._scheduler.runJob('settingsMonitor');
-        logger.info('Settings monitor job triggered successfully');
-        res.json({ 
-          success: true, 
-          message: 'Settings monitor job triggered successfully'
-        });
-      } catch (error) {
-        logger.error(`Error triggering settings monitor:`, error);
-        res.status(500).json({ error: `Failed to trigger settings monitor: ${error.message}` });
-      }
-    });
 
     /**
      * GET /api/health

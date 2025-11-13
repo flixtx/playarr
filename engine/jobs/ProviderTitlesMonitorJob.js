@@ -8,13 +8,12 @@ import { generateTitleKey } from '../utils/titleUtils.js';
  */
 export class ProviderTitlesMonitorJob extends BaseJob {
   /**
-   * @param {import('../managers/StorageManager.js').StorageManager} cache - Storage manager instance for temporary cache
    * @param {import('../services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service instance
    * @param {Map<string, import('../providers/BaseIPTVProvider.js').BaseIPTVProvider>} providers - Map of providerId -> provider instance (already initialized)
    * @param {import('../providers/TMDBProvider.js').TMDBProvider} tmdbProvider - TMDB provider singleton instance
    */
-  constructor(cache, mongoData, providers, tmdbProvider) {
-    super('ProviderTitlesMonitorJob', cache, mongoData, providers, tmdbProvider);
+  constructor(mongoData, providers, tmdbProvider) {
+    super('ProviderTitlesMonitorJob', mongoData, providers, tmdbProvider);
   }
 
   /**

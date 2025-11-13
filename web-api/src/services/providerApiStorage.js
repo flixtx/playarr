@@ -39,6 +39,48 @@ export class ProviderApiStorage {
       fs.ensureDirSync(dirPath);
       const filename = params.page ? `list-${params.page}.m3u8` : 'list.m3u8';
       return path.join(dirPath, filename);
+    },
+    // TMDB endpoints
+    'tmdb-search': (providerId, type, params) => {
+      const safeTitle = (params.title || '').replace(/[^a-zA-Z0-9]/g, '_');
+      const yearStr = params.year ? `_${params.year}` : '_no-year';
+      const dirPath = path.join(this.cacheDir, 'tmdb', 'search', type);
+      fs.ensureDirSync(dirPath);
+      return path.join(dirPath, `${safeTitle}${yearStr}.json`);
+    },
+    'tmdb-find': (providerId, type, params) => {
+      if (!params.imdbId) {
+        throw new Error('imdbId is required for tmdb-find endpoint');
+      }
+      const typeCacheKey = type === 'movies' ? 'movie' : 'tv';
+      const dirPath = path.join(this.cacheDir, 'tmdb', typeCacheKey, 'imdb');
+      fs.ensureDirSync(dirPath);
+      return path.join(dirPath, `${params.imdbId}.json`);
+    },
+    'tmdb-details': (providerId, type, params) => {
+      if (!params.tmdbId) {
+        throw new Error('tmdbId is required for tmdb-details endpoint');
+      }
+      const dirPath = path.join(this.cacheDir, 'tmdb', type, 'details');
+      fs.ensureDirSync(dirPath);
+      return path.join(dirPath, `${params.tmdbId}.json`);
+    },
+    'tmdb-season': (providerId, type, params) => {
+      if (!params.tmdbId || params.seasonNumber === undefined) {
+        throw new Error('tmdbId and seasonNumber are required for tmdb-season endpoint');
+      }
+      const dirPath = path.join(this.cacheDir, 'tmdb', 'tv', 'season');
+      fs.ensureDirSync(dirPath);
+      return path.join(dirPath, `${params.tmdbId}-S${params.seasonNumber}.json`);
+    },
+    'tmdb-similar': (providerId, type, params) => {
+      if (!params.tmdbId) {
+        throw new Error('tmdbId is required for tmdb-similar endpoint');
+      }
+      const page = params.page || 1;
+      const dirPath = path.join(this.cacheDir, 'tmdb', type, 'similar');
+      fs.ensureDirSync(dirPath);
+      return path.join(dirPath, `${params.tmdbId}-${page}.json`);
     }
   };
 
@@ -82,7 +124,13 @@ export class ProviderApiStorage {
       categories: 1, // 1 hour
       metadata: 1, // 1 hour
       extended: type === 'movies' ? null : 6, // null for movies (never), 6h for tvshows
-      m3u8: 6 // 6 hours
+      m3u8: 6, // 6 hours
+      // TMDB endpoints
+      'tmdb-search': null, // Never expire
+      'tmdb-find': null, // Never expire
+      'tmdb-details': null, // Never expire
+      'tmdb-season': 6, // 6 hours
+      'tmdb-similar': null // Never expire
     };
     
     return ttlMap[endpoint] || null;

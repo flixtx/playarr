@@ -12,12 +12,10 @@ export class TMDBProvider extends BaseProvider {
 
   /**
    * Get or create the singleton instance of TMDBProvider
-   * @param {import('../managers/StorageManager.js').StorageManager} cache - Storage manager instance for temporary cache
    * @param {import('../services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service instance
-   * @param {Object} settings - Settings object (loaded from MongoDB at higher level)
    * @returns {Promise<TMDBProvider>} Singleton instance
    */
-  static async getInstance(cache, mongoData, settings = {}) {
+  static async getInstance(mongoData) {
     if (!TMDBProvider.instance) {
       const providerData = {
         id: 'tmdb',
@@ -25,14 +23,10 @@ export class TMDBProvider extends BaseProvider {
         api_rate: {
           concurrent: 45,
           duration_seconds: 1
-        },
-        token: settings.tmdb_token || '' // Allow empty token
+        }
       };
 
-      TMDBProvider.instance = new TMDBProvider(providerData, cache, mongoData);
-      
-      // Initialize cache policies
-      await TMDBProvider.instance.initializeCachePolicies();
+      TMDBProvider.instance = new TMDBProvider(providerData, mongoData);
     }
     return TMDBProvider.instance;
   }
@@ -40,17 +34,14 @@ export class TMDBProvider extends BaseProvider {
   /**
    * Private constructor - use getInstance() instead
    * @param {Object} providerData - Provider configuration data
-   * @param {import('../managers/StorageManager.js').StorageManager} cache - Storage manager instance for temporary cache
    * @param {import('../services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service instance
    */
-  constructor(providerData, cache, mongoData) {
-    super(providerData, cache, 'TMDB');
+  constructor(providerData, mongoData) {
+    super(providerData, 'TMDB');
     if (!mongoData) {
       throw new Error('MongoDataService is required');
     }
     this.mongoData = mongoData;
-    this.apiBaseUrl = 'https://api.themoviedb.org/3';
-    this.apiToken = providerData.token;
     
     // In-memory cache for main titles
     // Loaded once at the start of job execution and kept in memory
@@ -74,103 +65,11 @@ export class TMDBProvider extends BaseProvider {
   }
 
   /**
-   * Get default cache policies for TMDB provider
-   * @returns {Object} Cache policy object
-   */
-  getDefaultCachePolicies() {
-    return {
-      'tmdb/search/movie': null,           // Never expire
-      'tmdb/search/tv': null,              // Never expire
-      'tmdb/find/imdb': null,              // Never expire
-      'tmdb/movie/details': null,           // Never expire
-      'tmdb/tv/details': null,             // Never expire
-      'tmdb/tv/season': 6,                 // 6 hours
-      'tmdb/movie/similar': null,          // Never expire
-      'tmdb/tv/similar': null,            // Never expire
-    };
-  }
-
-  /**
    * Get the provider type identifier
    * @returns {string} 'tmdb'
    */
   getProviderType() {
     return 'tmdb';
-  }
-
-  /**
-   * Update TMDB settings (token and rate limits)
-   * @param {Object} settings - Settings object with tmdb_token and/or tmdb_api_rate
-   * @returns {Promise<void>}
-   */
-  async updateSettings(settings) {
-    let needsRateLimiterUpdate = false;
-
-    // Update API token if provided
-    if (settings.tmdb_token !== undefined) {
-      this.apiToken = settings.tmdb_token || '';
-      this.logger.info('TMDB API token updated');
-    }
-
-    // Update rate limit configuration if provided
-    if (settings.tmdb_api_rate !== undefined) {
-      const oldRate = this.providerData.api_rate;
-      this.providerData.api_rate = settings.tmdb_api_rate;
-      
-      // Check if rate limit configuration actually changed
-      if (JSON.stringify(oldRate) !== JSON.stringify(settings.tmdb_api_rate)) {
-        needsRateLimiterUpdate = true;
-        this.logger.info('TMDB API rate limit configuration updated');
-      }
-    }
-
-    // Reinitialize rate limiter if rate config changed
-    if (needsRateLimiterUpdate) {
-      const rateConfig = this.providerData.api_rate || { concurrent: 1, duration_seconds: 1 };
-      const concurrent = rateConfig.concurrent || rateConfig.concurrect || 1;
-      const durationSeconds = rateConfig.duration_seconds || 1;
-      
-      // Update existing limiter configuration
-      this.limiter.updateSettings({
-        reservoir: concurrent,
-        reservoirRefreshInterval: durationSeconds * 1000,
-        reservoirRefreshAmount: concurrent,
-        maxConcurrent: concurrent,
-        minTime: 0
-      });
-      
-      this.logger.debug(`Rate limiter reconfigured: ${concurrent} requests per ${durationSeconds} second(s)`);
-    }
-  }
-
-  /**
-   * Build TMDB API URL with authentication
-   * @param {string} endpoint - API endpoint (e.g., '/movie/123')
-   * @param {Object} [params={}] - Query parameters
-   * @returns {string} Complete API URL
-   */
-  _buildApiUrl(endpoint, params = {}) {
-    const url = new URL(`${this.apiBaseUrl}${endpoint}`);
-    // Note: Authentication is done via Bearer token in headers, not query parameter
-    
-    for (const [key, value] of Object.entries(params)) {
-      if (value !== undefined && value !== null) {
-        url.searchParams.set(key, value);
-      }
-    }
-    
-    return url.toString();
-  }
-
-  /**
-   * Get authentication headers for TMDB API requests
-   * @returns {Object} Headers object with Authorization Bearer token
-   */
-  _getAuthHeaders() {
-    return {
-      'Authorization': `Bearer ${this.apiToken}`,
-      'Accept': 'application/json'
-    };
   }
 
   /**
@@ -181,25 +80,12 @@ export class TMDBProvider extends BaseProvider {
    * @returns {Promise<Object>} TMDB search results
    */
   async search(type, title, year = null) {
-    const endpoint = type === 'movie' ? '/search/movie' : '/search/tv';
-    const params = { query: title };
-    
+    let endpoint = `/api/tmdb/search?type=${type}&title=${encodeURIComponent(title)}`;
     if (year) {
-      if (type === 'movie') {
-        params.year = year;
-      } else {
-        params.first_air_date_year = year;
-      }
+      endpoint += `&year=${year}`;
     }
-    
-    const url = this._buildApiUrl(endpoint, params);
-    return await this.fetchWithCache(
-      url,
-      ['tmdb', type,'search', `${title}_${year || 'no-year'}.json`],
-      null, // Cache forever (null = Infinity)
-      false, // forceRefresh
-      { headers: this._getAuthHeaders() }
-    );
+    this.logger.debug(`Searching TMDB via server: ${type}/${title}${year ? `/${year}` : ''}`);
+    return await this._makeGetRequestWithLimiter(endpoint);
   }
 
   /**
@@ -226,28 +112,13 @@ export class TMDBProvider extends BaseProvider {
    * Find TMDB ID by IMDB ID (returns both movies and TV shows)
    * Note: TMDB find endpoint returns both movie_results and tv_results
    * @param {string} imdbId - IMDB ID (e.g., 'tt0133093')
+   * @param {string} type - Media type ('movies' or 'tvshows')
    * @returns {Promise<Object>} TMDB find results with movie_results and tv_results arrays
    */
   async findByIMDBId(imdbId, type) {
-    const url = this._buildApiUrl('/find/' + imdbId, {
-      external_source: 'imdb_id'
-    });
-
-    const type_caches_mapping = {
-      'movies': 'movie',
-      'tvshows': 'tv'
-    };
-
-    const type_cache_key = type_caches_mapping[type];
-    const cache_key = ['tmdb', type_cache_key, 'imdb', `${imdbId}.json`];
-
-    return await this.fetchWithCache(
-      url,
-      cache_key,
-      null, // Cache forever (null = Infinity)
-      false, // forceRefresh
-      { headers: this._getAuthHeaders() }
-    );
+    const endpoint = `/api/tmdb/find/imdb?imdb_id=${encodeURIComponent(imdbId)}&type=${type}`;
+    this.logger.debug(`Finding TMDB by IMDB ID via server: ${imdbId}/${type}`);
+    return await this._makeGetRequestWithLimiter(endpoint);
   }
 
   
@@ -258,16 +129,9 @@ export class TMDBProvider extends BaseProvider {
    * @returns {Promise<Object>} Media details
    */
   async getDetails(type, tmdbId) {
-    const endpoint = type === 'movie' ? `/movie/${tmdbId}` : `/tv/${tmdbId}`;
-    const url = this._buildApiUrl(endpoint);
-    
-    return await this.fetchWithCache(
-      url,
-      ['tmdb', type, 'details', `${tmdbId}.json`],
-      null, // Cache forever (null = Infinity)
-      false, // forceRefresh
-      { headers: this._getAuthHeaders() }
-    );
+    const endpoint = `/api/tmdb/details?type=${type}&tmdb_id=${tmdbId}`;
+    this.logger.debug(`Getting TMDB details via server: ${type}/${tmdbId}`);
+    return await this._makeGetRequestWithLimiter(endpoint);
   }
 
   /**
@@ -295,15 +159,9 @@ export class TMDBProvider extends BaseProvider {
    * @returns {Promise<Object>} Season details
    */
   async getTVShowSeasonDetails(tmdbId, seasonNumber) {
-    const url = this._buildApiUrl(`/tv/${tmdbId}/season/${seasonNumber}`);
-    
-    return await this.fetchWithCache(
-      url,
-      ['tmdb', 'tv', 'season', `${tmdbId}-S${seasonNumber}.json`],
-      6, // Cache for 6 hours
-      false, // forceRefresh
-      { headers: this._getAuthHeaders() }
-    );
+    const endpoint = `/api/tmdb/season?tmdb_id=${tmdbId}&season=${seasonNumber}`;
+    this.logger.debug(`Getting TMDB season details via server: ${tmdbId}/S${seasonNumber}`);
+    return await this._makeGetRequestWithLimiter(endpoint);
   }
 
   /**
@@ -314,19 +172,9 @@ export class TMDBProvider extends BaseProvider {
    * @returns {Promise<Object>} Similar media results with pagination info
    */
   async getSimilar(type, tmdbId, page = 1) {
-    const endpoint = type === 'movie' 
-      ? `/movie/${tmdbId}/similar` 
-      : `/tv/${tmdbId}/similar`;
-    
-    const url = this._buildApiUrl(endpoint, { page });
-    
-    return await this.fetchWithCache(
-      url,
-      ['tmdb', type, 'similar', `${tmdbId}-${page}.json`],
-      null, // Cache forever (null = Infinity)
-      false, // forceRefresh
-      { headers: this._getAuthHeaders() }
-    );
+    const endpoint = `/api/tmdb/similar?type=${type}&tmdb_id=${tmdbId}&page=${page}`;
+    this.logger.debug(`Getting TMDB similar via server: ${type}/${tmdbId}/${page}`);
+    return await this._makeGetRequestWithLimiter(endpoint);
   }
 
   /**
@@ -1057,7 +905,7 @@ export class TMDBProvider extends BaseProvider {
 
   /**
    * Match TMDB ID for a title using multiple strategies
-   * Uses caching internally through fetchWithCache for all API calls
+   * Caching is handled by the server (web-api), rate limiting is handled here via limiter
    * @param {Object} title - Title object with title_id, title, etc.
    * @param {string} type - Media type ('movies' or 'tvshows')
    * @param {string} providerType - Provider type ('agtv', 'xtream', etc.)

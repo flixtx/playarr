@@ -83,11 +83,6 @@ class SettingsManager extends BaseManager {
       // Write back (this merges/overwrites the entire object)
       await this._writeSettings(settings);
 
-      // Trigger engine settings monitor if TMDB token changed
-      if (key === 'tmdb_token') {
-        await this._triggerEngineSettingsMonitor();
-      }
-
       return {
         response: { value },
         statusCode: 200,
@@ -98,26 +93,6 @@ class SettingsManager extends BaseManager {
         response: { error: `Failed to set ${key}` },
         statusCode: 500,
       };
-    }
-  }
-
-  /**
-   * Trigger engine settings monitor job
-   * @private
-   */
-  async _triggerEngineSettingsMonitor() {
-    try {
-      const axios = (await import('axios')).default;
-      const engineApiUrl = 'http://127.0.0.1:3002';
-      await axios.post(
-        `${engineApiUrl}/api/settings/monitor`,
-        {},
-        { timeout: 5000 }
-      );
-      this.logger.info('Triggered engine settings monitor job');
-    } catch (error) {
-      this.logger.error(`Failed to trigger engine settings monitor: ${error.message}`);
-      // Don't throw - setting update should succeed even if engine notification fails
     }
   }
 

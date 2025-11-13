@@ -854,7 +854,7 @@ export class MongoDataService {
 
   /**
    * Purge cache files for a provider
-   * Note: This removes cache policies, actual cache files are managed by StorageManager
+   * Note: Cache policies are no longer used in the engine (caching is handled by the server)
    * @param {string} providerId - Provider ID
    * @returns {Promise<number>} Number of deleted cache policies
    */
