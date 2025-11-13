@@ -1,29 +1,106 @@
-import { createLogger } from '../utils/logger.js';
+import { BaseProvider } from './BaseProvider.js';
 
 /**
  * Base class for all IPTV providers (Xtream, AGTV)
- * Provides common functionality for fetching provider configurations and accessing storage
+ * Provides common functionality for accessing provider configurations and storage
+ * Includes rate limiting per providerId
+ * Provider configs are loaded once on startup and can be reloaded via reloadProviderConfigs()
  * @abstract
+ * @extends {BaseProvider}
  */
-export class BaseIPTVProvider {
+export class BaseIPTVProvider extends BaseProvider {
   /**
-   * @param {import('../services/mongodb-database.js').MongoDatabaseService} database - Database service instance
-   * @param {import('../services/providerApiStorage.js').ProviderApiStorage} storage - Provider API disk storage instance
+   * @param {Object<string, Object>} providerConfigs - Map of provider ID to provider configuration
+   * @param {string} [cacheDir] - Optional cache directory path (defaults to CACHE_DIR env var or '/app/cache')
    */
-  constructor(database, storage) {
-    this._database = database;
-    this._storage = storage;
-    this._providersCollection = 'iptv_providers';
-    this.logger = createLogger(this.constructor.name);
+  constructor(providerConfigs = {}, cacheDir = null) {
+    super(null, cacheDir);
+    
+    // Store provider configs as Map<providerId, config>
+    // Filter out deleted providers
+    this._providerConfigs = new Map();
+    this._loadConfigs(providerConfigs);
+    
+    // Initialize cache directories for all providers
+    for (const providerId of this._providerConfigs.keys()) {
+      this.initialize(providerId);
+    }
   }
 
   /**
-   * Get provider configuration from database
-   * @param {string} providerId - Provider ID
-   * @returns {Promise<Object>} Provider configuration
+   * Load provider configurations into internal map
+   * @private
+   * @param {Object<string, Object>} providerConfigs - Map of provider ID to provider configuration
    */
-  async _getProviderConfig(providerId) {
-    const provider = await this._database.getData(this._providersCollection, { id: providerId });
+  _loadConfigs(providerConfigs) {
+    this._providerConfigs.clear();
+    
+    for (const [providerId, config] of Object.entries(providerConfigs)) {
+      // Only store non-deleted providers
+      if (!config.deleted) {
+        this._providerConfigs.set(providerId, config);
+        
+        // Create or update limiter for this provider
+        const rateConfig = config.api_rate || { concurrent: 1, duration_seconds: 1 };
+        this._getOrCreateLimiter(providerId, rateConfig);
+      }
+    }
+    
+    this.logger.debug(`Loaded ${this._providerConfigs.size} provider config(s)`);
+  }
+
+  /**
+   * Reload provider configurations
+   * Called when providers are updated/created/deleted
+   * @param {Object<string, Object>} providerConfigs - Map of provider ID to provider configuration
+   */
+  reloadProviderConfigs(providerConfigs) {
+    // Get current provider IDs
+    const currentProviderIds = new Set(this._providerConfigs.keys());
+    
+    // Load new configs
+    this._loadConfigs(providerConfigs);
+    
+    // Remove limiters for providers that no longer exist or were deleted
+    const newProviderIds = new Set(this._providerConfigs.keys());
+    for (const providerId of currentProviderIds) {
+      if (!newProviderIds.has(providerId)) {
+        this._removeLimiter(providerId);
+      }
+    }
+    
+    // Initialize cache directories for newly added providers
+    for (const providerId of newProviderIds) {
+      if (!currentProviderIds.has(providerId)) {
+        this.initialize(providerId);
+      }
+    }
+    
+    this.logger.debug(`Reloaded provider configs: ${this._providerConfigs.size} provider(s)`);
+  }
+
+  /**
+   * Get or create rate limiter for a provider
+   * @protected
+   * @param {string} providerId - Provider ID
+   * @returns {Bottleneck} Rate limiter instance
+   */
+  _getLimiter(providerId) {
+    // Get provider config to read rate limiting settings
+    const provider = this._getProviderConfig(providerId);
+    const rateConfig = provider.api_rate || { concurrent: 1, duration_seconds: 1 };
+    
+    return this._getOrCreateLimiter(providerId, rateConfig);
+  }
+
+  /**
+   * Get provider configuration from internal map
+   * @protected
+   * @param {string} providerId - Provider ID
+   * @returns {Object} Provider configuration
+   */
+  _getProviderConfig(providerId) {
+    const provider = this._providerConfigs.get(providerId);
     
     if (!provider) {
       throw new Error(`Provider ${providerId} not found`);

@@ -1,5 +1,5 @@
-import axios from 'axios';
 import { BaseIPTVProvider } from './BaseIPTVProvider.js';
+import path from 'path';
 
 /**
  * Apollo Group TV provider implementation
@@ -16,47 +16,64 @@ export class AGTVProvider extends BaseIPTVProvider {
    * @returns {Promise<string>} M3U8 content as string
    */
   async fetchM3U8(providerId, type, page = null) {
-    // Check cache first
-    const cacheParams = page ? { page } : {};
-    const cached = this._storage.get(providerId, type, 'm3u8', cacheParams);
-    if (cached !== null) {
-      this.logger.debug(`Cache hit for M3U8: ${providerId}/${type}${page ? `/${page}` : ''}`);
-      return cached;
-    }
-
-    const provider = await this._getProviderConfig(providerId);
+    const provider = this._getProviderConfig(providerId);
     
-    const apiUrl = provider.api_url;
-    const username = provider.username;
-    const password = provider.password;
-    const mediaTypeSegment = type; // 'movies' or 'tvshows'
-    
-    let url = `${apiUrl}/api/list/${username}/${password}/m3u8/${mediaTypeSegment}`;
+    let url = `${provider.api_url}/api/list/${provider.username}/${provider.password}/m3u8/${type}`;
     
     // Add page if provided (for paginated types like tvshows)
     if (page) {
       url += `/${page}`;
     }
     
-    try {
-      this.logger.debug(`Fetching M3U8 from AGTV: ${providerId}/${type}${page ? `/${page}` : ''}`);
-      const response = await axios.get(url, {
-        responseType: 'text',
-        timeout: 30000
-      });
-      
-      // Cache the result
-      this._storage.set(providerId, type, 'm3u8', response.data, cacheParams);
-      
-      return response.data;
-    } catch (error) {
-      if (error.response && error.response.status === 404) {
-        // End of pagination
-        throw new Error('Page not found (end of pagination)');
+    const limiter = this._getLimiter(providerId);
+
+    return await this._fetchTextWithCacheAxios({
+      providerId,
+      type,
+      endpoint: 'm3u8',
+      cacheParams: page ? { page } : {},
+      url,
+      headers: {},
+      limiter
+    });
+  }
+
+  /**
+   * Get cache key mappings for AGTV provider
+   * @private
+   * @param {string} providerId - Provider ID
+   * @returns {Object<string, {type: string, endpoint: string, dirBuilder: Function, fileBuilder: Function, cacheParams?: Object, ttl: number|null}>} Mapping of cache key identifier to cache configuration
+   */
+  _getCacheKeyMappings(providerId) {
+    return {
+      // Movies M3U8 (no page param = list.m3u8)
+      'm3u8-movies': {
+        type: 'movies',
+        endpoint: 'm3u8',
+        dirBuilder: (cacheDir, providerId, params) => {
+          return path.join(cacheDir, providerId, 'movies', 'metadata');
+        },
+        fileBuilder: (cacheDir, providerId, type, params) => {
+          const dirPath = path.join(cacheDir, providerId, type, 'metadata');
+          const filename = params.page ? `list-${params.page}.m3u8` : 'list.m3u8';
+          return path.join(dirPath, filename);
+        },
+        ttl: 6 // 6 hours
+      },
+      'm3u8-tvshows': {
+        type: 'tvshows',
+        endpoint: 'm3u8',
+        dirBuilder: (cacheDir, providerId, params) => {
+          return path.join(cacheDir, providerId, 'tvshows', 'metadata');
+        },
+        fileBuilder: (cacheDir, providerId, type, params) => {
+          const dirPath = path.join(cacheDir, providerId, type, 'metadata');
+          const filename = params.page ? `list-${params.page}.m3u8` : 'list.m3u8';
+          return path.join(dirPath, filename);
+        },
+        ttl: 6 // 6 hours
       }
-      this.logger.error(`Error fetching M3U8 from AGTV ${providerId}/${type}${page ? `/${page}` : ''}: ${error.message}`);
-      throw error;
-    }
+    };
   }
 }
 

@@ -9,10 +9,10 @@ const TMDB_TOKEN_KEY = 'tmdb_token';
 class SettingsRouter extends BaseRouter {
   /**
    * @param {SettingsManager} settingsManager - Settings manager instance
-   * @param {DatabaseService} database - Database service instance
+   * @param {import('../middleware/Middleware.js').default} middleware - Middleware instance
    */
-  constructor(settingsManager, database) {
-    super(database, 'SettingsRouter');
+  constructor(settingsManager, middleware) {
+    super(middleware, 'SettingsRouter');
     this._settingsManager = settingsManager;
   }
 
@@ -24,7 +24,7 @@ class SettingsRouter extends BaseRouter {
      * GET /api/settings/tmdb_token
      * Get TMDB token setting
      */
-    this.router.get('/tmdb_token', this._requireAuth, async (req, res) => {
+    this.router.get('/tmdb_token', this.middleware.requireAuth, async (req, res) => {
       try {
         const result = await this._settingsManager.getSetting(TMDB_TOKEN_KEY);
         return res.status(result.statusCode).json(result.response);
@@ -37,7 +37,7 @@ class SettingsRouter extends BaseRouter {
      * POST /api/settings/tmdb_token
      * Set TMDB token setting
      */
-    this.router.post('/tmdb_token', this._requireAuth, async (req, res) => {
+    this.router.post('/tmdb_token', this.middleware.requireAuth, async (req, res) => {
       try {
         const { value } = req.body;
 
@@ -56,7 +56,7 @@ class SettingsRouter extends BaseRouter {
      * DELETE /api/settings/tmdb_token
      * Delete TMDB token setting
      */
-    this.router.delete('/tmdb_token', this._requireAuth, async (req, res) => {
+    this.router.delete('/tmdb_token', this.middleware.requireAuth, async (req, res) => {
       try {
         const result = await this._settingsManager.deleteSetting(TMDB_TOKEN_KEY);
         return res.status(result.statusCode).json(result.response);

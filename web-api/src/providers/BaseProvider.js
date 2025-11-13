@@ -1,0 +1,564 @@
+import { createLogger } from '../utils/logger.js';
+import Bottleneck from 'bottleneck';
+import fs from 'fs-extra';
+import path from 'path';
+
+/**
+ * Base class for all providers (IPTV, TMDB, etc.)
+ * Provides common rate limiting and caching functionality using Bottleneck and disk storage
+ * @abstract
+ */
+export class BaseProvider {
+  /**
+   * @param {string} [loggerName] - Optional logger name (defaults to class name)
+   * @param {string} [cacheDir] - Optional cache directory path (defaults to CACHE_DIR env var or '/app/cache')
+   */
+  constructor(loggerName = null, cacheDir = null) {
+    this.logger = createLogger(loggerName || this.constructor.name);
+    
+    // Rate limiters per providerId: Map<providerId, Bottleneck>
+    // Used by IPTV providers that need per-provider limiters
+    this._limiters = new Map();
+    
+    // Single limiter instance (used by TMDB provider)
+    this.limiter = null;
+    
+    // Cache directory for disk-based caching
+    this._cacheDir = cacheDir || process.env.CACHE_DIR || '/app/cache';
+    if (this._cacheDir) {
+      fs.ensureDirSync(this._cacheDir);
+    }
+    
+    // Track initialized directories to avoid redundant I/O
+    this._initializedDirs = new Set();
+  }
+
+  /**
+   * Get or create rate limiter for a provider
+   * @protected
+   * @param {string} providerId - Provider ID
+   * @param {Object} rateConfig - Rate limiting configuration
+   * @param {number} [rateConfig.concurrent] - Number of concurrent requests
+   * @param {number} [rateConfig.duration_seconds] - Duration in seconds for rate limit window
+   * @returns {Bottleneck} Rate limiter instance
+   */
+  _getOrCreateLimiter(providerId, rateConfig = {}) {
+    // Check if limiter already exists
+    if (this._limiters.has(providerId)) {
+      return this._limiters.get(providerId);
+    }
+
+    // Handle typo "concurrect" for backward compatibility
+    const normalizedConfig = {
+      concurrent: rateConfig.concurrent || rateConfig.concurrect || 1,
+      duration_seconds: rateConfig.duration_seconds || 1
+    };
+
+    // Create new limiter for this provider using shared creation method
+    const limiter = this._createLimiter(normalizedConfig);
+    
+    this._limiters.set(providerId, limiter);
+    this.logger.debug(`Created rate limiter for provider ${providerId}: ${normalizedConfig.concurrent} requests per ${normalizedConfig.duration_seconds} second(s)`);
+    
+    return limiter;
+  }
+
+  /**
+   * Create a single limiter instance (for providers like TMDB)
+   * @protected
+   * @param {Object} rateConfig - Rate limiting configuration
+   * @param {number} [rateConfig.concurrent] - Number of concurrent requests
+   * @param {number} [rateConfig.duration_seconds] - Duration in seconds for rate limit window
+   * @returns {Bottleneck} Rate limiter instance
+   */
+  _createLimiter(rateConfig = {}) {
+    const concurrent = rateConfig.concurrent || 1;
+    const durationSeconds = rateConfig.duration_seconds || 1;
+
+    const limiter = new Bottleneck({
+      reservoir: concurrent,
+      reservoirRefreshInterval: durationSeconds * 1000,
+      reservoirRefreshAmount: concurrent,
+      maxConcurrent: concurrent,
+      minTime: 0
+    });
+
+    this.logger.debug(`Created rate limiter: ${concurrent} requests per ${durationSeconds} second(s)`);
+    
+    return limiter;
+  }
+
+  /**
+   * Update or recreate a limiter for a provider
+   * @protected
+   * @param {string} providerId - Provider ID
+   * @param {Object} rateConfig - Rate limiting configuration
+   */
+  _updateLimiter(providerId, rateConfig) {
+    // Remove existing limiter
+    if (this._limiters.has(providerId)) {
+      const oldLimiter = this._limiters.get(providerId);
+      oldLimiter.disconnect();
+      this._limiters.delete(providerId);
+    }
+
+    // Create new limiter with updated config
+    this._getOrCreateLimiter(providerId, rateConfig);
+  }
+
+  /**
+   * Remove a limiter for a provider
+   * @protected
+   * @param {string} providerId - Provider ID
+   */
+  _removeLimiter(providerId) {
+    if (this._limiters.has(providerId)) {
+      const limiter = this._limiters.get(providerId);
+      limiter.disconnect();
+      this._limiters.delete(providerId);
+      this.logger.debug(`Removed rate limiter for provider ${providerId}`);
+    }
+  }
+
+  /**
+   * Cleanup all limiters
+   * @protected
+   */
+  _cleanupLimiters() {
+    for (const [providerId, limiter] of this._limiters.entries()) {
+      limiter.disconnect();
+    }
+    this._limiters.clear();
+    
+    if (this.limiter) {
+      this.limiter.disconnect();
+      this.limiter = null;
+    }
+  }
+
+  /**
+   * Get cache key mappings for this provider
+   * Must be implemented by subclasses to return their specific cache key configurations
+   * @private
+   * @abstract
+   * @param {string} providerId - Provider ID
+   * @returns {Object<string, {type: string, endpoint: string, dirBuilder: Function, fileBuilder: Function, cacheParams?: Object, ttl: number|null}>} Mapping of cache key identifier to cache configuration
+   */
+  _getCacheKeyMappings(providerId) {
+    throw new Error('_getCacheKeyMappings() must be implemented by subclass');
+  }
+
+  /**
+   * Initialize cache directories
+   * Should be called once after provider construction to pre-create all cache directories
+   * @param {string} [providerId] - Optional provider ID (for IPTV providers that support multiple)
+   */
+  initialize(providerId = null) {
+    if (!this._cacheDir) {
+      return;
+    }
+
+    try {
+      const mappings = this._getCacheKeyMappings(providerId || 'default');
+      
+      for (const [cacheKey, { dirBuilder, cacheParams = {} }] of Object.entries(mappings)) {
+        if (!dirBuilder) {
+          continue;
+        }
+        
+        try {
+          // For static paths, use empty params
+          // For dynamic paths, we'll ensure base directory exists
+          const dirPath = dirBuilder(this._cacheDir, providerId || 'default', cacheParams);
+          const dirKey = `${providerId || 'default'}:${dirPath}`;
+          
+          if (!this._initializedDirs.has(dirKey)) {
+            fs.ensureDirSync(dirPath);
+            this._initializedDirs.add(dirKey);
+            this.logger.debug(`Initialized cache directory: ${dirPath}`);
+          }
+        } catch (error) {
+          this.logger.warn(`Failed to initialize cache directory for ${cacheKey}: ${error.message}`);
+        }
+      }
+    } catch (error) {
+      // Provider might not implement mappings yet, that's okay
+      this.logger.debug(`Could not initialize cache directories: ${error.message}`);
+    }
+  }
+
+
+  /**
+   * Get TTL in hours for a cache key
+   * @private
+   * @param {string} providerId - Provider ID
+   * @param {string} cacheKey - Cache key identifier
+   * @param {string} type - Media type (for fallback)
+   * @returns {number|null} TTL in hours, null for never expire
+   */
+  _getTTL(providerId, cacheKey, type = null) {
+    try {
+      const mappings = this._getCacheKeyMappings(providerId);
+      const mapping = mappings[cacheKey];
+      if (mapping && mapping.ttl !== undefined) {
+        return mapping.ttl;
+      }
+    } catch (error) {
+      // If provider doesn't implement mappings, fall back to default
+    }
+    return null; // Default: never expire
+  }
+
+  /**
+   * Check if cache file is expired
+   * @private
+   * @param {string} filePath - Path to cache file
+   * @param {number|null} ttlHours - TTL in hours (null for never expire)
+   * @returns {boolean} True if expired or doesn't exist
+   */
+  _isCacheExpired(filePath, ttlHours) {
+    if (!fs.existsSync(filePath)) {
+      return true;
+    }
+    
+    if (ttlHours === null) {
+      return false; // Never expires
+    }
+    
+    const stats = fs.statSync(filePath);
+    const ageMs = Date.now() - stats.mtimeMs;
+    const maxAgeMs = ttlHours * 60 * 60 * 1000;
+    
+    return ageMs >= maxAgeMs;
+  }
+
+  /**
+   * Get cached data from disk
+   * @private
+   * @param {string} providerId - Provider ID
+   * @param {string} type - Media type
+   * @param {string} endpoint - Endpoint type
+   * @param {Object} params - Additional parameters
+   * @returns {any|null} Cached data or null if not found/expired
+   */
+  _getCache(providerId, type, endpoint, params = {}) {
+    if (!this._cacheDir) {
+      return null;
+    }
+
+    try {
+      // Get cache key mappings from provider
+      const mappings = this._getCacheKeyMappings(providerId);
+      
+      // Find the mapping for this endpoint and type
+      let mapping = null;
+      let cacheKey = null;
+      for (const [key, value] of Object.entries(mappings)) {
+        if (value.endpoint === endpoint && value.type === type) {
+          mapping = value;
+          cacheKey = key;
+          break;
+        }
+      }
+
+      if (!mapping || !mapping.fileBuilder) {
+        return null;
+      }
+
+      const filePath = mapping.fileBuilder(this._cacheDir, providerId, type, params);
+      
+      // Ensure directory exists (for dynamic paths that weren't pre-initialized)
+      const dirPath = path.dirname(filePath);
+      const dirKey = `${providerId}:${dirPath}`;
+      if (!this._initializedDirs.has(dirKey)) {
+        fs.ensureDirSync(dirPath);
+        this._initializedDirs.add(dirKey);
+      }
+      const ttlHours = mapping.ttl !== undefined ? mapping.ttl : null;
+      
+      if (this._isCacheExpired(filePath, ttlHours)) {
+        return null;
+      }
+      
+      // Read based on file extension
+      if (filePath.endsWith('.m3u8')) {
+        return fs.readFileSync(filePath, 'utf8');
+      } else {
+        return fs.readJsonSync(filePath);
+      }
+    } catch (error) {
+      this.logger.error(`Error reading cache: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Set cached data to disk
+   * @private
+   * @param {string} providerId - Provider ID
+   * @param {string} type - Media type
+   * @param {string} endpoint - Endpoint type
+   * @param {any} data - Data to cache
+   * @param {Object} params - Additional parameters
+   */
+  _setCache(providerId, type, endpoint, data, params = {}) {
+    if (!this._cacheDir) {
+      return;
+    }
+
+    try {
+      // Get cache key mappings from provider
+      const mappings = this._getCacheKeyMappings(providerId);
+      
+      // Find the mapping for this endpoint and type
+      let mapping = null;
+      for (const [key, value] of Object.entries(mappings)) {
+        if (value.endpoint === endpoint && value.type === type) {
+          mapping = value;
+          break;
+        }
+      }
+
+      if (!mapping || !mapping.fileBuilder) {
+        this.logger.warn(`No cache mapping found for ${endpoint}: ${providerId}/${type}`);
+        return;
+      }
+
+      const filePath = mapping.fileBuilder(this._cacheDir, providerId, type, params);
+      
+      // Ensure directory exists (for dynamic paths that weren't pre-initialized)
+      const dirPath = path.dirname(filePath);
+      const dirKey = `${providerId}:${dirPath}`;
+      if (!this._initializedDirs.has(dirKey)) {
+        fs.ensureDirSync(dirPath);
+        this._initializedDirs.add(dirKey);
+      }
+      
+      // Write based on data type
+      if (typeof data === 'string') {
+        // M3U8 content
+        fs.writeFileSync(filePath, data, 'utf8');
+      } else {
+        // JSON data
+        fs.writeJsonSync(filePath, data, { spaces: 2 });
+      }
+      
+      this.logger.debug(`Cached data to: ${filePath}`);
+    } catch (error) {
+      this.logger.error(`Error writing cache: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Get cache keys and their corresponding cache paths for a provider
+   * Returns a mapping of cache key identifiers to their cache file paths (relative to cacheDir)
+   * @param {string} providerId - Provider ID
+   * @returns {Object<string, {path: string, ttl: number|null}>} Mapping of cache key to cache path info
+   */
+  getCacheKeys(providerId) {
+    if (!this._cacheDir) {
+      return {};
+    }
+
+    try {
+      // Call the abstract method implemented by subclasses
+      const cacheKeyMappings = this._getCacheKeyMappings(providerId);
+      
+      // Convert logical cache keys to actual file paths
+      const result = {};
+      for (const [cacheKey, { type, endpoint, fileBuilder, cacheParams = {}, ttl }] of Object.entries(cacheKeyMappings)) {
+        try {
+          const cachePath = fileBuilder(this._cacheDir, providerId, type, cacheParams);
+          // Return relative path from cacheDir for easier cleanup
+          const relativePath = cachePath.replace(this._cacheDir + path.sep, '');
+          result[cacheKey] = {
+            path: relativePath,
+            ttl: ttl !== undefined ? ttl : null
+          };
+        } catch (error) {
+          this.logger.warn(`Failed to build cache path for key ${cacheKey}: ${error.message}`);
+        }
+      }
+      
+      return result;
+    } catch (error) {
+      this.logger.warn(`Failed to get cache keys for provider ${providerId}: ${error.message}`);
+      return {};
+    }
+  }
+
+  /**
+   * Fetch JSON data with caching and rate limiting (using fetch)
+   * @protected
+   * @param {Object} options - Fetch options
+   * @param {string} options.providerId - Provider ID (or 'tmdb' for TMDB)
+   * @param {string} options.type - Media type
+   * @param {string} options.endpoint - Cache endpoint name (e.g., 'tmdb-search', 'categories')
+   * @param {Object} [options.cacheParams={}] - Parameters for cache key uniqueness
+   * @param {string} options.url - Full URL to fetch
+   * @param {Object} [options.headers={}] - Request headers
+   * @param {Bottleneck} [options.limiter] - Rate limiter (uses this.limiter if not provided)
+   * @param {Function} [options.transform] - Optional transform function for response data
+   * @returns {Promise<Object>} JSON response data
+   */
+  async _fetchJsonWithCache({ providerId, type, endpoint, cacheParams = {}, url, headers = {}, limiter = null, transform = null }) {
+    const limiterToUse = limiter || this.limiter;
+    if (!limiterToUse) {
+      throw new Error('Rate limiter is required');
+    }
+
+    // Check cache first
+    const cached = this._getCache(providerId, type, endpoint, cacheParams);
+    if (cached !== null) {
+      this.logger.debug(`Cache hit for ${endpoint}: ${providerId}/${type}`);
+      return cached;
+    }
+
+    // Make API call with rate limiting
+    const data = await limiterToUse.schedule(async () => {
+      const response = await fetch(url, { headers });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ status_message: `HTTP ${response.status}` }));
+        throw new Error(errorData.status_message || `API error: ${response.status}`);
+      }
+      return await response.json();
+    });
+
+    // Transform data if transform function provided
+    const finalData = transform ? transform(data) : data;
+
+    // Cache the result
+    this._setCache(providerId, type, endpoint, finalData, cacheParams);
+
+    return finalData;
+  }
+
+  /**
+   * Fetch JSON data with caching and rate limiting (using axios)
+   * @protected
+   * @param {Object} options - Fetch options
+   * @param {string} options.providerId - Provider ID
+   * @param {string} options.type - Media type
+   * @param {string} options.endpoint - Cache endpoint name (e.g., 'categories', 'metadata')
+   * @param {Object} [options.cacheParams={}] - Parameters for cache key uniqueness
+   * @param {string} options.url - Full URL to fetch
+   * @param {Object} [options.headers={}] - Request headers
+   * @param {Bottleneck} options.limiter - Rate limiter (required for axios-based calls)
+   * @param {Function} [options.transform] - Optional transform function for response data
+   * @param {number} [options.timeout=30000] - Request timeout in milliseconds
+   * @returns {Promise<Object>} JSON response data
+   */
+  async _fetchJsonWithCacheAxios({ providerId, type, endpoint, cacheParams = {}, url, headers = {}, limiter, transform = null, timeout = 30000 }) {
+    if (!limiter) {
+      throw new Error('Rate limiter is required');
+    }
+
+    // Check cache first
+    const cached = this._getCache(providerId, type, endpoint, cacheParams);
+    if (cached !== null) {
+      this.logger.debug(`Cache hit for ${endpoint}: ${providerId}/${type}`);
+      return cached;
+    }
+
+    // Make API call with rate limiting
+    const axios = (await import('axios')).default;
+    const data = await limiter.schedule(async () => {
+      const response = await axios.get(url, { headers, timeout });
+      return response.data;
+    });
+
+    // Transform data if transform function provided
+    const finalData = transform ? transform(data) : data;
+
+    // Cache the result
+    this._setCache(providerId, type, endpoint, finalData, cacheParams);
+
+    return finalData;
+  }
+
+  /**
+   * Fetch text/M3U8 data with caching and rate limiting (using fetch)
+   * @protected
+   * @param {Object} options - Fetch options
+   * @param {string} options.providerId - Provider ID
+   * @param {string} options.type - Media type
+   * @param {string} options.endpoint - Cache endpoint name (e.g., 'm3u8')
+   * @param {Object} [options.cacheParams={}] - Parameters for cache key uniqueness
+   * @param {string} options.url - Full URL to fetch
+   * @param {Object} [options.headers={}] - Request headers
+   * @param {Bottleneck} [options.limiter] - Rate limiter (uses this.limiter if not provided)
+   * @returns {Promise<string>} Text response data
+   */
+  async _fetchTextWithCache({ providerId, type, endpoint, cacheParams = {}, url, headers = {}, limiter = null }) {
+    const limiterToUse = limiter || this.limiter;
+    if (!limiterToUse) {
+      throw new Error('Rate limiter is required');
+    }
+
+    // Check cache first
+    const cached = this._getCache(providerId, type, endpoint, cacheParams);
+    if (cached !== null) {
+      this.logger.debug(`Cache hit for ${endpoint}: ${providerId}/${type}`);
+      return cached;
+    }
+
+    // Make API call with rate limiting
+    const data = await limiterToUse.schedule(async () => {
+      const response = await fetch(url, { headers });
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status} ${response.statusText}`);
+      }
+      return await response.text();
+    });
+
+    // Cache the result
+    this._setCache(providerId, type, endpoint, data, cacheParams);
+
+    return data;
+  }
+
+  /**
+   * Fetch text/M3U8 data with caching and rate limiting (using axios)
+   * @protected
+   * @param {Object} options - Fetch options
+   * @param {string} options.providerId - Provider ID
+   * @param {string} options.type - Media type
+   * @param {string} options.endpoint - Cache endpoint name (e.g., 'm3u8')
+   * @param {Object} [options.cacheParams={}] - Parameters for cache key uniqueness
+   * @param {string} options.url - Full URL to fetch
+   * @param {Object} [options.headers={}] - Request headers
+   * @param {Bottleneck} options.limiter - Rate limiter (required for axios-based calls)
+   * @param {number} [options.timeout=30000] - Request timeout in milliseconds
+   * @returns {Promise<string>} Text response data
+   */
+  async _fetchTextWithCacheAxios({ providerId, type, endpoint, cacheParams = {}, url, headers = {}, limiter, timeout = 30000 }) {
+    if (!limiter) {
+      throw new Error('Rate limiter is required');
+    }
+
+    // Check cache first
+    const cached = this._getCache(providerId, type, endpoint, cacheParams);
+    if (cached !== null) {
+      this.logger.debug(`Cache hit for ${endpoint}: ${providerId}/${type}`);
+      return cached;
+    }
+
+    // Make API call with rate limiting
+    const axios = (await import('axios')).default;
+    const data = await limiter.schedule(async () => {
+      const response = await axios.get(url, {
+        headers,
+        responseType: 'text',
+        timeout
+      });
+      return response.data;
+    });
+
+    // Cache the result
+    this._setCache(providerId, type, endpoint, data, cacheParams);
+
+    return data;
+  }
+}
+

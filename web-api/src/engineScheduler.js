@@ -1,28 +1,22 @@
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { pathToFileURL } from 'url';
 import { createLogger } from './utils/logger.js';
 import jobsConfig from './jobs.json' with { type: 'json' };
 import { JobsManager } from './managers/JobsManager.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 /**
- * Engine scheduler class for the Playarr Engine
+ * Engine scheduler class for the Playarr Web-API
  * Manages job scheduling using native setInterval (replaces Bree.js)
  */
 export class EngineScheduler {
   /**
-   * @param {import('./services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service
+   * @param {Map<string, import('./jobs/BaseJob.js').BaseJob>} jobInstances - Map of jobName -> job instance
+   * @param {import('./repositories/JobHistoryRepository.js').JobHistoryRepository} jobHistoryRepo - Job history repository (for resetInProgress)
    */
-  constructor(mongoData) {
-    this._mongoData = mongoData;
+  constructor(jobInstances, jobHistoryRepo) {
+    this._jobInstances = jobInstances; // Map<jobName, BaseJob>
+    this._jobHistoryRepo = jobHistoryRepo;
     this._jobsManager = null;
-    this._intervalId = null;
     this._intervalIds = new Map(); // Map of jobName -> intervalId
     this._runningJobs = new Map();
-    this._workersDir = path.join(__dirname, 'workers');
     this.logger = createLogger('EngineScheduler');
   }
 
@@ -33,9 +27,9 @@ export class EngineScheduler {
   async initialize() {
     this.logger.info('Initializing EngineScheduler...');
 
-    // Reset all in-progress jobs in case engine was interrupted
+    // Reset all in-progress jobs in case server was interrupted
     try {
-      const resetCount = await this._mongoData.resetInProgressJobs();
+      const resetCount = await this._jobHistoryRepo.resetInProgress();
       if (resetCount > 0) {
         this.logger.info(`Reset ${resetCount} in-progress job(s) from previous session`);
       }
@@ -45,7 +39,7 @@ export class EngineScheduler {
     }
 
     const scheduledJobs = jobsConfig.jobs.filter(job => job.interval);
-    this._jobsManager = new JobsManager(this._mongoData, jobsConfig, null);
+    this._jobsManager = new JobsManager(null, jobsConfig, this, this._jobHistoryRepo);
 
     // Set up individual intervals for each scheduled job
     scheduledJobs.forEach(job => {
@@ -98,11 +92,6 @@ export class EngineScheduler {
       });
       this._intervalIds.clear();
     }
-    // Keep backward compatibility with old _intervalId
-    if (this._intervalId) {
-      clearInterval(this._intervalId);
-      this._intervalId = null;
-    }
     this.logger.info('Job scheduler stopped');
   }
 
@@ -143,25 +132,16 @@ export class EngineScheduler {
    * @private
    */
   async _executeJob(name, workerData) {
-    const jobConfig = jobsConfig.jobs.find(j => j.name === name);
-    if (!jobConfig) {
+    const job = this._jobInstances.get(name);
+    if (!job) {
       throw new Error(`Job "${name}" not found`);
     }
 
     this.logger.info(`Starting job '${name}'${workerData?.providerId ? ` (providerId: ${workerData.providerId})` : ''}`);
 
     try {
-      // Use generic worker for all jobs
-      const workerPath = path.join(this._workersDir, 'genericJobWorker.js');
-      const jobModule = await import(pathToFileURL(workerPath).href);
-      const jobFn = jobModule.default || jobModule;
-
-      if (typeof jobFn !== 'function') {
-        throw new Error(`Worker file genericJobWorker.js does not export a default function`);
-      }
-
-      // Pass job name to the generic worker along with any existing workerData
-      const result = await jobFn({ ...workerData, jobName: name });
+      // Execute the job directly (handlers are created fresh in execute() method)
+      const result = await job.execute();
 
       if (result !== undefined) {
         this.logger.info(`Job '${name}' completed successfully`);

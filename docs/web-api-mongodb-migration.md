@@ -72,7 +72,6 @@ API Route → MongoDatabaseService.insertTitle() → MongoDB Insert → Save dat
 - `iptv_providers` - Provider configurations
 - `users` - User accounts
 - `settings` - Application settings
-- `cache_policy` - Cache policies
 - `stats` - Statistics
 
 ---
@@ -175,7 +174,7 @@ async _getSources(titleId, mediaType, seasonNumber, episodeNumber) {
 }
 ```
 
-### 4. Settings and Cache Policy
+### 4. Settings
 
 **Before:**
 ```javascript
@@ -238,11 +237,6 @@ async deleteUser(username)
 async getSetting(key)
 async getSettings()
 async setSetting(key, value)
-
-// Cache Policy
-async getCachePolicy(path)
-async getCachePolicies()
-async setCachePolicy(path, ttlHours)
 
 // Stats
 async getStats()
@@ -477,7 +471,6 @@ async getTitles(query = {}, options = {}) {
 | `data/categories/{providerId}.categories.json` | `provider_categories` | `db.provider_categories.find({ provider_id: ... })` |
 | `data/settings/iptv-providers.json` | `iptv_providers` | `db.iptv_providers.find({ enabled: true })` |
 | `data/settings/settings.json` | `settings` | `db.settings.findOne({ _id: key })` |
-| `data/settings/cache-policy.json` | `cache_policy` | `db.cache_policy.findOne({ _id: path })` |
 | `data/settings/users.json` | `users` | `db.users.findOne({ username: ... })` |
 | `data/stats.json` | `stats` | `db.stats.findOne({})` |
 

@@ -8,10 +8,11 @@ import { DatabaseCollections, toCollectionName } from '../config/collections.js'
  */
 class SettingsManager extends BaseManager {
   /**
-   * @param {import('../services/database.js').DatabaseService} database - Database service instance
+   * @param {import('../repositories/SettingsRepository.js').SettingsRepository} settingsRepo - Settings repository
    */
-  constructor(database) {
-    super('SettingsManager', database);
+  constructor(settingsRepo) {
+    super('SettingsManager');
+    this._settingsRepo = settingsRepo;
     this._settingsCollection = toCollectionName(DatabaseCollections.SETTINGS);
   }
 
@@ -25,7 +26,7 @@ class SettingsManager extends BaseManager {
   async _readSettings() {
     try {
       // Settings are stored as an object, not an array
-      const settings = await this._database.getDataObject(this._settingsCollection);
+      const settings = await this._settingsRepo.getAllAsObject();
       return settings || {};
     } catch (error) {
       this.logger.error(`Error reading settings: ${error.message}`);
@@ -43,7 +44,15 @@ class SettingsManager extends BaseManager {
   async _writeSettings(settings) {
     try {
       // Settings are stored as an object, write directly
-      await this._database.updateDataObject(this._settingsCollection, settings);
+      // Update each setting individually
+      for (const [key, value] of Object.entries(settings)) {
+        await this._settingsRepo.updateOne(
+          this._settingsRepo.collectionName,
+          { _id: key },
+          { $set: { value, lastUpdated: new Date() } },
+          { upsert: true }
+        );
+      }
     } catch (error) {
       this.logger.error(`Error writing settings: ${error.message}`);
       throw error;
@@ -121,6 +130,18 @@ class SettingsManager extends BaseManager {
         statusCode: 500,
       };
     }
+  }
+
+  /**
+   * Test database connectivity
+   * Performs a simple query to verify the database connection is working
+   * Used by healthcheck endpoint
+   * @returns {Promise<void>} Resolves if connected, throws if disconnected
+   */
+  async testConnection() {
+    // Perform a simple query to test database connectivity
+    // This will throw an error if the database is disconnected
+    await this._settingsRepo.findOneByQuery({});
   }
 }
 

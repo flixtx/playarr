@@ -1,20 +1,20 @@
 import { BaseManager } from './BaseManager.js';
-import axios from 'axios';
+import jobsConfig from '../jobs.json' with { type: 'json' };
 
 /**
- * Jobs manager for managing engine jobs
- * Reads job history from MongoDB and triggers jobs via engine HTTP API
+ * Jobs manager for managing jobs
+ * Reads job history from MongoDB and triggers jobs via scheduler
  */
 class JobsManager extends BaseManager {
   /**
-   * @param {import('../services/database.js').DatabaseService} database - Database service instance
+   * @param {Object} jobsConfig - Jobs configuration
+   * @param {import('../engineScheduler.js').EngineScheduler} [scheduler] - Optional scheduler instance for triggering jobs
+   * @param {import('../repositories/JobHistoryRepository.js').JobHistoryRepository} [jobHistoryRepo] - Optional job history repository
    */
-  constructor(database) {
-    super('JobsManager', database);
-    
-    // Engine API configuration - static localhost port, no API key needed
-    // Engine is always on localhost:3002 in Docker, not configurable
-    this._engineApiUrl = 'http://127.0.0.1:3002';
+  constructor(jobsConfig, scheduler = null, jobHistoryRepo = null) {
+    super('JobsManager');
+    this._scheduler = scheduler;
+    this._jobHistoryRepo = jobHistoryRepo;
   }
 
   /**
@@ -24,8 +24,11 @@ class JobsManager extends BaseManager {
    */
   async _getJobHistory(jobName) {
     try {
-      const collection = this._database.getCollection('job_history');
-      const jobHistory = await collection.findOne({ job_name: jobName });
+      if (!this._jobHistoryRepo) {
+        this.logger.warn('JobHistoryRepository not available, cannot get job history');
+        return null;
+      }
+      const jobHistory = await this._jobHistoryRepo.findOneByQuery({ job_name: jobName });
       return jobHistory;
     } catch (error) {
       this.logger.error(`Error getting job history for ${jobName}:`, error);
@@ -58,44 +61,25 @@ class JobsManager extends BaseManager {
 
   /**
    * Get all jobs with their details and status
+   * Reads from jobs.json and MongoDB job history
    * @returns {Promise<{response: object, statusCode: number}>}
    */
   async getAllJobs() {
     try {
-      // Get job list from engine API
-      const engineApiUrl = `${this._engineApiUrl}/api/jobs`;
-      
-      let engineJobs = [];
-      try {
-        const response = await axios.get(engineApiUrl, { 
-          timeout: 5000 
-        });
-        engineJobs = response.data.jobs || [];
-      } catch (error) {
-        this.logger.error('Error fetching jobs from engine API, error:', error);
-        // Return jobs with "engine unreachable" status
-        return {
-          response: {
-            jobs: [],
-            error: 'Engine API is not reachable',
-            engineReachable: false
-          },
-          statusCode: 503
-        };
-      }
+      // Get job list from jobs.json
+      const jobs = jobsConfig.jobs || [];
 
       // Get job history for each job from MongoDB
       const jobsWithHistory = await Promise.all(
-        engineJobs.map(async (engineJob) => {
-          const jobHistory = await this._getJobHistory(engineJob.jobHistoryName);
-          return this._formatJobData(engineJob, jobHistory);
+        jobs.map(async (job) => {
+          const jobHistory = await this._getJobHistory(job.jobHistoryName || job.name);
+          return this._formatJobData(job, jobHistory);
         })
       );
 
       return {
         response: {
-          jobs: jobsWithHistory,
-          engineReachable: true
+          jobs: jobsWithHistory
         },
         statusCode: 200
       };
@@ -109,7 +93,7 @@ class JobsManager extends BaseManager {
   }
 
   /**
-   * Trigger a job via engine API
+   * Trigger a job via scheduler
    * @param {string} jobName - Job name (e.g., "syncIPTVProviderTitles")
    * @param {Object} [options] - Optional parameters
    * @param {string} [options.providerId] - Provider ID to process all titles for
@@ -117,60 +101,69 @@ class JobsManager extends BaseManager {
    */
   async triggerJob(jobName, options = {}) {
     try {
+      if (!this._scheduler) {
+        return {
+          response: {
+            success: false,
+            error: 'Job scheduler is not available'
+          },
+          statusCode: 503
+        };
+      }
+
       const { providerId } = options;
-      const engineApiUrl = `${this._engineApiUrl}/api/jobs/${jobName}/trigger`;
+      const workerData = providerId ? { providerId } : {};
 
       try {
-        const response = await axios.post(engineApiUrl, { providerId: providerId || null }, { 
-          timeout: 10000 
-        });
+        await this._scheduler.runJob(jobName, workerData);
         
         return {
           response: {
             success: true,
-            message: response.data.message || `Job '${jobName}' triggered successfully`,
-            jobName: response.data.jobName || jobName,
-            ...(response.data.providerId ? { providerId: response.data.providerId } : {})
+            message: `Job '${jobName}' triggered successfully`,
+            jobName: jobName,
+            ...(providerId ? { providerId } : {})
           },
           statusCode: 200
         };
       } catch (error) {
         // Handle specific error cases
-        if (error.response) {
-          const statusCode = error.response.status;
-          const errorData = error.response.data;
-          
-          if (statusCode === 409) {
-            // Job already running
-            return {
-              response: {
-                success: false,
-                error: errorData.error || `Job '${jobName}' is already running`,
-                status: errorData.status || 'running'
-              },
-              statusCode: 409
-            };
-          } else if (statusCode === 404) {
-            // Job not found
-            return {
-              response: {
-                success: false,
-                error: errorData.error || `Job '${jobName}' not found`
-              },
-              statusCode: 404
-            };
-          }
+        if (error.code === 'JOB_ALREADY_RUNNING' || error.isAlreadyRunning) {
+          return {
+            response: {
+              success: false,
+              error: error.message || `Job '${jobName}' is already running`,
+              status: 'running'
+            },
+            statusCode: 409
+          };
+        } else if (error.code === 'JOB_CANNOT_RUN') {
+          return {
+            response: {
+              success: false,
+              error: error.message || `Job '${jobName}' cannot run`,
+              blockingJobs: error.blockingJobs || []
+            },
+            statusCode: 409
+          };
+        } else if (error.message && error.message.includes('not found')) {
+          return {
+            response: {
+              success: false,
+              error: error.message || `Job '${jobName}' not found`
+            },
+            statusCode: 404
+          };
         }
         
-        // Network or other errors
+        // Other errors
         this.logger.error(`Error triggering job ${jobName}:`, error.message);
         return {
           response: {
             success: false,
-            error: `Failed to trigger job: ${error.message}`,
-            engineReachable: false
+            error: `Failed to trigger job: ${error.message}`
           },
-          statusCode: 503
+          statusCode: 500
         };
       }
     } catch (error) {
@@ -178,8 +171,7 @@ class JobsManager extends BaseManager {
       return {
         response: { 
           success: false,
-          error: 'Failed to trigger job',
-          engineReachable: false
+          error: 'Failed to trigger job'
         },
         statusCode: 500
       };

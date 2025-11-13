@@ -39,7 +39,6 @@ The engine provides the following core business capabilities:
 - **Intelligent Caching**: Multi-layer caching system to minimize API calls and improve performance
   - Raw API response caching
   - Processed data caching
-  - Configurable cache expiration policies via `cache-policy.json`
   - Automatic cache purging to manage disk space
 - **Rate Limiting**: Configurable rate limiting per provider to respect API constraints
 - **Concurrent Processing**: Efficient parallel processing of movies and TV shows
@@ -80,11 +79,10 @@ The engine is designed for:
 
 1. Install dependencies:
 ```bash
-# Install all dependencies (engine, API, UI)
+# Install all dependencies (API, UI)
 npm run install:all
 
 # Or install individually
-npm run install:engine
 npm run install:api
 npm run install:ui
 ```
@@ -103,13 +101,12 @@ cp .env.example .env
 4. Ensure provider configuration exists in `data/settings/iptv-providers.json`:
    - See the [Configurations](#configurations) section below for details
 
-5. Run the full stack (engine + API):
+5. Run the application:
 ```bash
-# Run both engine and API (from root)
+# Run API (serves UI on port 3000)
 npm start
 
 # Or run individually
-npm run start:engine  # Run engine only
 npm run start:api     # Run API only (serves UI on port 3000)
 
 # Run in development mode with watch
@@ -329,56 +326,21 @@ Settings are stored in the MongoDB `settings` collection and contain global conf
   - **concurrect**: Maximum concurrent requests to TMDB API.
   - **duration_seconds**: Time window in seconds.
 
-### Cache Policy Configuration
-
-Cache policies are stored in the MongoDB `cache_policy` collection and control cache expiration. Policies are loaded into memory at startup and checked synchronously during cache operations. Expiration is checked on-demand when cache is accessed, eliminating the need for a separate purge job.
-
-```json
-{
-  "tmdb/search/movie": null,
-  "tmdb/search/tv": null,
-  "tmdb/find/imdb": null,
-  "tmdb/movie": null,
-  "tmdb/tv": null,
-  "tmdb/movie/{tmdbId}/similar": null,
-  "tmdb/tv/{tmdbId}/similar": null,
-  "tmdb/tv/{tmdbId}/season": 6,
-  "{providerId}/categories": 1,
-  "{providerId}/metadata": 1,
-  "{providerId}/extended/movies": null,
-  "{providerId}/extended/tvshows": 6,
-  "{providerId}": 6
-}
-```
-
-#### Cache Policy Fields Explained
-
-- **Key format**: Cache path patterns (supports dynamic segments like `{providerId}` and `{tmdbId}`)
-- **Value**: TTL in hours:
-  - `null`: Cache never expires (kept indefinitely)
-  - `number`: TTL in hours (e.g., `6` = expires after 6 hours)
-- **Example**: `"tmdb/tv/{tmdbId}/season": 6` means season data expires after 6 hours
-- **Dynamic matching**: Patterns like `tmdb/tv/12345/season` are matched to `tmdb/tv/{tmdbId}/season` during cache expiration checks
-
-Cache expiration is checked on-demand when accessing cached data. Files older than their TTL are considered expired and will be refreshed on the next access.
-
 ### Configuration Storage
 
 All configuration data is stored in MongoDB collections:
 - **Provider configs**: `iptv_providers` collection (enabled providers with priority)
 - **Settings**: `settings` collection (TMDB token, API rate limits, etc.)
-- **Cache policy**: `cache_policy` collection (TTL values for cache paths)
 - **Users**: `users` collection (API user accounts)
 
-The engine automatically loads all enabled providers from the `iptv_providers` collection and processes them in priority order. Cache policies are loaded into memory at startup for fast synchronous checks.
+The engine automatically loads all enabled providers from the `iptv_providers` collection and processes them in priority order.
 
 **Note**: The `data/` directory is only used by migration scripts to read legacy files. Runtime data is stored entirely in MongoDB.
 
 ## Features
 
 - Fetches movies and TV shows from AGTV (M3U8) and Xtream Codec providers
-- Disk caching for efficient data retrieval with configurable expiration policies
-- On-demand cache expiration checks based on TTL policies stored in MongoDB
+- Disk caching for efficient data retrieval with configurable expiration policies (TTL values defined in provider classes)
 - Automatic update detection for TV shows (Xtream)
 - All data stored in MongoDB for efficient querying and scalability
 - Supports provider-specific cleanup rules and ignore patterns
@@ -438,16 +400,7 @@ playarr/
 │   └── stats.json             # Legacy stats (migration scripts only)
 ├── cache/                     # Raw API response cache (file-based)
 ├── logs/                      # Application logs
-│   ├── engine.log             # Engine logs
 │   └── api.log                # API logs
-├── engine/
-│   ├── jobs/                  # Job implementations
-│   ├── managers/              # Storage manager
-│   ├── providers/             # Provider implementations
-│   ├── utils/                 # Utility functions
-│   ├── workers/               # Worker scripts for Bree.js scheduler
-│   ├── package.json           # Engine dependencies
-│   └── index.js               # Main entry point
 ├── web-api/
 │   ├── src/
 │   │   ├── config/            # Configuration (database, collections)

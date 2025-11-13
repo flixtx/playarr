@@ -13,17 +13,63 @@ dotenv.config();
  */
 class ProvidersManager extends BaseManager {
   /**
-   * @param {import('../services/database.js').DatabaseService} database - Database service instance
    * @param {import('../services/websocket.js').WebSocketService} webSocketService - WebSocket service instance
    * @param {import('./titles.js').TitlesManager} titlesManager - Titles manager instance
    * @param {Object<string, import('../providers/BaseIPTVProvider.js').BaseIPTVProvider>} providerTypeMap - Map of provider type to provider instance
+   * @param {import('../repositories/ProviderTitleRepository.js').ProviderTitleRepository} providerTitleRepo - Provider titles repository
+   * @param {import('../repositories/TitleStreamRepository.js').TitleStreamRepository} titleStreamRepo - Title streams repository
+   * @param {import('../repositories/TitleRepository.js').TitleRepository} titleRepo - Titles repository
+   * @param {import('../repositories/ProviderRepository.js').ProviderRepository} providerRepo - Provider repository
    */
-  constructor(database, webSocketService, titlesManager, providerTypeMap) {
-    super('ProvidersManager', database);
+  constructor(webSocketService, titlesManager, providerTypeMap, providerTitleRepo, titleStreamRepo, titleRepo, providerRepo) {
+    super('ProvidersManager');
     this._webSocketService = webSocketService;
     this._titlesManager = titlesManager;
     this._providerTypeMap = providerTypeMap;
     this._providersCollection = toCollectionName(DatabaseCollections.IPTV_PROVIDERS);
+    
+    // Repositories for composite operations
+    this._providerTitleRepo = providerTitleRepo;
+    this._titleStreamRepo = titleStreamRepo;
+    this._titleRepo = titleRepo;
+    this._providerRepo = providerRepo;
+  }
+
+  /**
+   * Reload provider configs in all provider instances
+   * Called after providers are created, updated, or deleted
+   * @private
+   */
+  async _reloadProviderConfigs() {
+    try {
+      const allProviders = await this._readAllProviders();
+      
+      // Group providers by type
+      const xtreamConfigs = {};
+      const agtvConfigs = {};
+      
+      for (const provider of allProviders) {
+        if (provider.deleted) continue; // Skip deleted providers
+        
+        if (provider.type === DataProvider.XTREAM) {
+          xtreamConfigs[provider.id] = provider;
+        } else if (provider.type === DataProvider.AGTV) {
+          agtvConfigs[provider.id] = provider;
+        }
+      }
+      
+      // Reload configs in each provider instance
+      if (this._providerTypeMap[DataProvider.XTREAM]) {
+        this._providerTypeMap[DataProvider.XTREAM].reloadProviderConfigs(xtreamConfigs);
+      }
+      if (this._providerTypeMap[DataProvider.AGTV]) {
+        this._providerTypeMap[DataProvider.AGTV].reloadProviderConfigs(agtvConfigs);
+      }
+      
+      this.logger.debug('Reloaded provider configs in all provider instances');
+    } catch (error) {
+      this.logger.error('Error reloading provider configs:', error);
+    }
   }
 
   /**
@@ -33,7 +79,7 @@ class ProvidersManager extends BaseManager {
    * @returns {Promise<string>} Provider type ('xtream' or 'agtv')
    */
   async _getProviderType(providerId) {
-    const provider = await this._database.getData(this._providersCollection, { id: providerId });
+    const provider = await this._providerRepo.findOneByQuery({ id: providerId });
     
     if (!provider) {
       throw new Error(`Provider ${providerId} not found`);
@@ -60,6 +106,130 @@ class ProvidersManager extends BaseManager {
     }
 
     return this._providerTypeMap[providerType];
+  }
+
+  /**
+   * Extract category IDs from category keys
+   * Category keys format: "movies-1", "tvshows-5"
+   * Returns: [1, 5] (numeric IDs)
+   * @private
+   * @param {Array<string>} categoryKeys - Array of category keys
+   * @returns {Array<number>} Array of category IDs
+   */
+  _extractCategoryIdsFromKeys(categoryKeys) {
+    if (!categoryKeys || categoryKeys.length === 0) {
+      return [];
+    }
+
+    return categoryKeys
+      .map(key => {
+        const parts = key.split('-');
+        return parts.length > 1 ? parseInt(parts[1]) : null;
+      })
+      .filter(id => id !== null && !isNaN(id));
+  }
+
+  /**
+   * Remove provider from all title sources (composite operation)
+   * Coordinates: ProviderTitleRepository → TitleStreamRepository → TitleRepository
+   * @private
+   * @param {string} providerId - Provider ID
+   * @param {Array<string>} [categoryKeys=null] - Optional: specific category keys
+   * @param {Object} [enabledCategories=null] - Optional: enabled categories object
+   * @returns {Promise<{titlesUpdated: number, streamsRemoved: number, titleKeys: Array<string>}>}
+   */
+  async _removeProviderFromTitles(providerId, categoryKeys = null, enabledCategories = null) {
+    try {
+      let query = {
+        provider_id: providerId,
+        tmdb_id: { $exists: true, $ne: null } // Only titles with TMDB match
+      };
+
+      // Build query filter based on parameters
+      if (enabledCategories) {
+        // Categories-changed scenario: remove from disabled categories
+        const enabledCategoryKeys = [
+          ...(enabledCategories.movies || []),
+          ...(enabledCategories.tvshows || [])
+        ];
+        const enabledCategoryIds = this._extractCategoryIdsFromKeys(enabledCategoryKeys);
+        
+        if (enabledCategoryIds.length > 0) {
+          query.category_id = { $nin: enabledCategoryIds }; // NOT in enabled = disabled
+        }
+        // If no enabled categories, all are disabled, so query remains as-is
+      } else if (categoryKeys && categoryKeys.length > 0) {
+        // Specific categories scenario
+        const categoryIds = this._extractCategoryIdsFromKeys(categoryKeys);
+        if (categoryIds.length > 0) {
+          query.category_id = { $in: categoryIds };
+        } else {
+          // Invalid category keys, return early
+          return { titlesUpdated: 0, streamsRemoved: 0, titleKeys: [] };
+        }
+      }
+      // If categoryKeys is null and enabledCategories is null, query remains:
+      // { provider_id: providerId, tmdb_id: { $exists: true, $ne: null } }
+      // This means "all categories" (for delete/disable provider)
+
+      // Step 1: Find provider titles using ProviderTitleRepository
+      const providerTitles = await this._providerTitleRepo.findByQuery(query);
+
+      if (providerTitles.length === 0) {
+        return { titlesUpdated: 0, streamsRemoved: 0, titleKeys: [] };
+      }
+
+      // Step 2: Build title_keys from provider titles
+      const titleKeys = [...new Set(
+        providerTitles
+          .filter(t => t.tmdb_id && t.type)
+          .map(t => `${t.type}-${t.tmdb_id}`)
+      )];
+
+      if (titleKeys.length === 0) {
+        return { titlesUpdated: 0, streamsRemoved: 0, titleKeys: [] };
+      }
+
+      // Step 3: Delete title_streams using TitleStreamRepository
+      const deletedStreams = await this._titleStreamRepo.deleteByProviderAndTitleKeys(providerId, titleKeys);
+
+      // Step 4: Update titles.streams using TitleRepository
+      const { titlesUpdated, streamsRemoved } = await this._titleRepo.removeProviderFromStreams(providerId, titleKeys);
+
+      return {
+        titlesUpdated,
+        streamsRemoved: deletedStreams.deletedCount || 0,
+        titleKeys
+      };
+    } catch (error) {
+      this.logger.error(`Error removing provider ${providerId} from titles: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete titles without streams (composite operation)
+   * Coordinates: TitleStreamRepository → TitleRepository
+   * @private
+   * @param {Array<string>} titleKeys - Title keys to check
+   * @returns {Promise<number>} Number of deleted titles
+   */
+  async _deleteTitlesWithoutStreams(titleKeys) {
+    if (!titleKeys || titleKeys.length === 0) {
+      return 0;
+    }
+
+    try {
+      // Step 1: Check title_streams using TitleStreamRepository
+      const titleStreams = await this._titleStreamRepo.findByTitleKeys(titleKeys);
+      const titleKeysWithStreams = new Set(titleStreams.map(ts => ts.title_key));
+
+      // Step 2 & 3: Check titles.streams and delete empty titles using TitleRepository
+      return await this._titleRepo.deleteWithoutStreams(titleKeys, titleKeysWithStreams);
+    } catch (error) {
+      this.logger.error(`Error deleting titles without streams: ${error.message}`);
+      throw error;
+    }
   }
 
   /**
@@ -134,11 +304,10 @@ class ProvidersManager extends BaseManager {
 
       // Query MongoDB directly for ignored titles for this provider
       // Ignored titles are in provider_titles collection with ignored: true
-      const collection = this._database.getCollection('provider_titles');
-      const ignoredTitles = await collection.find({
+      const ignoredTitles = await this._providerTitleRepo.findByQuery({
         provider_id: providerId,
         ignored: true
-      }).toArray();
+      });
 
       if (!ignoredTitles || ignoredTitles.length === 0) {
         return {
@@ -200,7 +369,7 @@ class ProvidersManager extends BaseManager {
    */
   async _readAllProviders() {
     try {
-      const providers = await this._database.getDataList(this._providersCollection);
+      const providers = await this._providerRepo.findByQuery({});
       return Array.isArray(providers) ? providers : [];
     } catch (error) {
       this.logger.error('Error reading providers:', error);
@@ -215,11 +384,10 @@ class ProvidersManager extends BaseManager {
    */
   async _writeAllProviders(providers) {
     try {
-      const collection = this._database.getCollection('iptv_providers');
       const now = new Date();
       
       // Delete all existing providers
-      await collection.deleteMany({});
+      await this._providerRepo.deleteManyByQuery({});
       
       // Insert all new providers with timestamps
       if (providers.length > 0) {
@@ -228,7 +396,7 @@ class ProvidersManager extends BaseManager {
           lastUpdated: now,
           createdAt: p.createdAt || now
         }));
-        await collection.insertMany(providersWithTimestamps);
+        await this._providerRepo.insertMany(this._providerRepo.collectionName, providersWithTimestamps);
       }
       
       this.logger.info(`Saved ${providers.length} providers to MongoDB`);
@@ -359,8 +527,8 @@ class ProvidersManager extends BaseManager {
       providers.push(providerData);
       await this._writeAllProviders(providers);
 
-      // Trigger engine notification for provider created
-      await this._notifyEngineProviderChanged(providerData.id, 'created', providerData);
+      // Reload provider configs in provider instances
+      await this._reloadProviderConfigs();
 
       // Broadcast WebSocket event
       this._webSocketService.broadcastEvent('provider_changed', {
@@ -439,10 +607,10 @@ class ProvidersManager extends BaseManager {
         // Provider being disabled - perform cleanup
         try {
           const { titlesUpdated, streamsRemoved, titleKeys } = 
-            await this._database.removeProviderFromTitles(providerId);
+            await this._removeProviderFromTitles(providerId);
           
           // removeProviderFromTitles already deletes title_streams, so no need to call deleteProviderTitleStreams
-          const deletedEmptyTitles = await this._database.deleteTitlesWithoutStreams(titleKeys);
+          const deletedEmptyTitles = await this._deleteTitlesWithoutStreams(titleKeys);
           
           this.logger.info(
             `Provider ${providerId} disabled cleanup: ${titlesUpdated} titles updated, ` +
@@ -454,7 +622,7 @@ class ProvidersManager extends BaseManager {
       } else if (enabledChanged && willBeEnabled) {
         // Provider being enabled - reset titles lastUpdated
         try {
-          const updatedCount = await this._database.resetProviderTitlesLastUpdated(providerId);
+          const updatedCount = await this._providerTitleRepo.resetLastUpdated(providerId);
           this.logger.info(`Reset lastUpdated for ${updatedCount} provider titles for ${providerId}`);
         } catch (error) {
           this.logger.error(`Error resetting titles lastUpdated for provider ${providerId}: ${error.message}`);
@@ -465,14 +633,8 @@ class ProvidersManager extends BaseManager {
       providers[providerIndex] = updatedProvider;
       await this._writeAllProviders(providers);
 
-      // Trigger engine notification based on changes
-      if (enabledChanged) {
-        const action = willBeEnabled ? 'enabled' : 'disabled';
-        await this._notifyEngineProviderChanged(providerId, action, updatedProvider);
-      } else {
-        // General update (no state change)
-        await this._notifyEngineProviderChanged(providerId, 'updated', updatedProvider);
-      }
+      // Reload provider configs in provider instances
+      await this._reloadProviderConfigs();
 
       // Broadcast WebSocket event
       this._webSocketService.broadcastEvent('provider_changed', {
@@ -511,17 +673,17 @@ class ProvidersManager extends BaseManager {
 
       const provider = providers[providerIndex];
 
-      // Perform cleanup operations using unified functions
+      // Perform cleanup operations using repositories
       try {
         // 1. Remove provider from titles.streams (and delete title_streams)
         const { titlesUpdated, streamsRemoved, titleKeys } = 
-          await this._database.removeProviderFromTitles(providerId);
+          await this._removeProviderFromTitles(providerId);
         
         // 2. Delete all provider_titles for this provider (only on delete, not disable)
-        const deletedTitles = await this._database.deleteProviderTitles(providerId);
+        const deletedTitles = await this._providerTitleRepo.deleteByProvider(providerId);
         
         // 3. Delete titles without streams (optional, can be async/background)
-        const deletedEmptyTitles = await this._database.deleteTitlesWithoutStreams(titleKeys);
+        const deletedEmptyTitles = await this._deleteTitlesWithoutStreams(titleKeys);
         
         // 4. Clear provider API cache (disk storage)
         // Get storage from any provider instance (they all share the same storage)
@@ -550,8 +712,8 @@ class ProvidersManager extends BaseManager {
       
       await this._writeAllProviders(providers);
 
-      // Trigger engine notification for provider deleted
-      await this._notifyEngineProviderChanged(providerId, 'deleted');
+      // Reload provider configs in provider instances
+      await this._reloadProviderConfigs();
 
       // Broadcast WebSocket event
       this._webSocketService.broadcastEvent('provider_changed', {
@@ -567,6 +729,162 @@ class ProvidersManager extends BaseManager {
       this.logger.error('Error deleting provider:', error);
       return {
         response: { error: 'Failed to delete provider' },
+        statusCode: 500,
+      };
+    }
+  }
+
+  /**
+   * Get all categories for a provider (movies + tvshows)
+   * Fetches from provider API and merges with enabled_categories from provider config
+   * @param {string} providerId - Provider ID
+   * @returns {Promise<{response: Array, statusCode: number}>}
+   */
+  async getCategories(providerId) {
+    try {
+      // Validate provider exists
+      const provider = await this.getProvider(providerId);
+      if (provider.statusCode !== 200) {
+        return {
+          response: { error: 'Provider not found' },
+          statusCode: 404,
+        };
+      }
+
+      const providerData = provider.response;
+
+      // Fetch categories from provider API (both movies and tvshows)
+      const [moviesCategories, tvshowsCategories] = await Promise.all([
+        this.fetchCategories(providerId, 'movies').catch(() => []),
+        this.fetchCategories(providerId, 'tvshows').catch(() => [])
+      ]);
+
+      // Get enabled categories from provider config
+      const enabledCategories = providerData.enabled_categories || { movies: [], tvshows: [] };
+      const enabledCategoryKeys = new Set([
+        ...(enabledCategories.movies || []),
+        ...(enabledCategories.tvshows || [])
+      ]);
+
+      // Transform and combine categories
+      const allCategories = [
+        ...moviesCategories.map(cat => ({
+          key: `movies-${cat.category_id}`,
+          type: 'movies',
+          category_id: cat.category_id,
+          category_name: cat.category_name,
+          enabled: enabledCategoryKeys.has(`movies-${cat.category_id}`)
+        })),
+        ...tvshowsCategories.map(cat => ({
+          key: `tvshows-${cat.category_id}`,
+          type: 'tvshows',
+          category_id: cat.category_id,
+          category_name: cat.category_name,
+          enabled: enabledCategoryKeys.has(`tvshows-${cat.category_id}`)
+        }))
+      ];
+
+      return {
+        response: allCategories,
+        statusCode: 200,
+      };
+    } catch (error) {
+      this.logger.error('Error getting categories:', error);
+      return {
+        response: { error: 'Failed to get categories' },
+        statusCode: 500,
+      };
+    }
+  }
+
+  /**
+   * Update enabled categories for a provider
+   * Updates provider config and performs cleanup for disabled categories
+   * @param {string} providerId - Provider ID
+   * @param {Object} enabledCategories - Object with movies and tvshows arrays of category keys
+   * @returns {Promise<{response: Object, statusCode: number}>}
+   */
+  async updateEnabledCategories(providerId, enabledCategories) {
+    try {
+      // Validate provider exists
+      const providerResult = await this.getProvider(providerId);
+      if (providerResult.statusCode !== 200) {
+        return {
+          response: { error: 'Provider not found' },
+          statusCode: 404,
+        };
+      }
+
+      // Validate enabledCategories structure
+      if (!enabledCategories || typeof enabledCategories !== 'object') {
+        return {
+          response: { error: 'enabledCategories must be an object with movies and tvshows arrays' },
+          statusCode: 400,
+        };
+      }
+
+      if (!Array.isArray(enabledCategories.movies) || !Array.isArray(enabledCategories.tvshows)) {
+        return {
+          response: { error: 'enabledCategories must have movies and tvshows arrays' },
+          statusCode: 400,
+        };
+      }
+
+      // Update provider document's enabled_categories field
+      const now = new Date();
+      
+      await this._providerRepo.updateOne(
+        this._providerRepo.collectionName,
+        { id: providerId },
+        {
+          $set: {
+            enabled_categories: {
+              movies: enabledCategories.movies || [],
+              tvshows: enabledCategories.tvshows || []
+            },
+            lastUpdated: now
+          }
+        }
+      );
+
+      // Perform cleanup for disabled categories using repositories
+      try {
+        // Remove provider from titles for disabled categories
+        const { titlesUpdated, streamsRemoved, titleKeys } = 
+          await this._removeProviderFromTitles(providerId, null, enabledCategories);
+        
+        // Delete titles without streams
+        const deletedEmptyTitles = await this._deleteTitlesWithoutStreams(titleKeys);
+        
+        this.logger.info(
+          `Provider ${providerId} categories changed cleanup: ${titlesUpdated} titles updated, ` +
+          `${streamsRemoved} streams removed, ${deletedEmptyTitles} empty titles deleted`
+        );
+      } catch (error) {
+        this.logger.error(`Error cleaning up categories for provider ${providerId}: ${error.message}`);
+      }
+
+      // Reload provider configs in provider instances
+      await this._reloadProviderConfigs();
+
+      // Broadcast WebSocket event
+      this._webSocketService.broadcastEvent('provider_changed', {
+        provider_id: providerId,
+        action: 'categories_updated'
+      });
+
+      return {
+        response: {
+          success: true,
+          message: 'Categories updated successfully',
+          enabled_categories: enabledCategories
+        },
+        statusCode: 200,
+      };
+    } catch (error) {
+      this.logger.error('Error updating enabled categories:', error);
+      return {
+        response: { error: 'Failed to update categories' },
         statusCode: 500,
       };
     }
@@ -611,6 +929,9 @@ class ProvidersManager extends BaseManager {
       // Save all providers
       await this._writeAllProviders(allProviders);
 
+      // Reload provider configs in provider instances
+      await this._reloadProviderConfigs();
+
       // Broadcast WebSocket event
       this._webSocketService.broadcastEvent('provider_changed', {
         provider_id: 'all',
@@ -630,34 +951,6 @@ class ProvidersManager extends BaseManager {
     }
   }
 
-  /**
-   * Notify engine of provider change
-   * @private
-   * @param {string} providerId - Provider ID
-   * @param {string} action - Action type: 'created' | 'deleted' | 'enabled' | 'disabled' | 'categories-changed' | 'updated'
-   * @param {Object} [providerConfig] - Optional provider config (engine can fetch if needed)
-   */
-  async _notifyEngineProviderChanged(providerId, action, providerConfig = null) {
-    try {
-      const axios = (await import('axios')).default;
-      const engineApiUrl = process.env.ENGINE_API_URL || 'http://127.0.0.1:3002';
-      
-      await axios.post(
-        `${engineApiUrl}/api/providers/${providerId}/changed`,
-        {
-          action,
-          providerId,
-          ...(providerConfig && { providerConfig })
-        },
-        { timeout: 5000 }
-      );
-      
-      this.logger.info(`Notified engine: provider ${providerId} ${action}`);
-    } catch (error) {
-      this.logger.error(`Failed to notify engine for provider ${providerId}: ${error.message}`);
-      // Don't throw - provider operation should succeed even if engine notification fails
-    }
-  }
 }
 
 // Export class

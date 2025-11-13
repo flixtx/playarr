@@ -20,10 +20,13 @@ const STREAM_HEADERS = {
  */
 class StreamManager extends BaseManager {
   /**
-   * @param {import('../services/database.js').DatabaseService} database - Database service instance
+   * @param {import('../repositories/TitleStreamRepository.js').TitleStreamRepository} titleStreamRepo - Title stream repository
+   * @param {import('../repositories/ProviderRepository.js').ProviderRepository} providerRepo - Provider repository
    */
-  constructor(database) {
-    super('StreamManager', database);
+  constructor(titleStreamRepo, providerRepo) {
+    super('StreamManager');
+    this._titleStreamRepo = titleStreamRepo;
+    this._providerRepo = providerRepo;
     this._timeout = 7500; // 7.5 seconds timeout for URL checks
   }
 
@@ -112,7 +115,7 @@ class StreamManager extends BaseManager {
       const titleKey = `${mediaType}-${titleId}`;
       
       // Query MongoDB title_streams collection directly
-      const streams = await this._database.getDataList('title_streams', {
+      const streams = await this._titleStreamRepo.findByQuery({
         title_key: titleKey,
         stream_id: streamIdSuffix
       });
@@ -127,7 +130,7 @@ class StreamManager extends BaseManager {
       // Get providers data to access streams_urls for base URL concatenation
       // Filter to only enabled providers
       const providersCollection = toCollectionName(DatabaseCollections.IPTV_PROVIDERS);
-      const allProviders = await this._database.getDataList(providersCollection) || [];
+      const allProviders = await this._providerRepo.findByQuery({}) || [];
       const providers = allProviders.filter(p => p.enabled !== false);
       const providersMap = new Map(providers.map(p => [p.id, p]));
 

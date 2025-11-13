@@ -1,5 +1,5 @@
 # Multi-stage build for Playarr
-# Builds engine, web API, and web UI components
+# Builds web API and web UI components
 # Stage 1: Build UI
 FROM node:20-alpine AS ui-builder
 
@@ -28,19 +28,7 @@ COPY web-api/package.json ./web-api/
 WORKDIR /app/web-api
 RUN npm install --omit=dev && npm cache clean --force
 
-# Stage 3: Build engine dependencies
-FROM node:20-alpine AS engine-builder
-
-WORKDIR /app
-
-# Copy engine package files
-COPY engine/package.json ./engine/
-
-# Install engine dependencies
-WORKDIR /app/engine
-RUN npm install --omit=dev && npm cache clean --force
-
-# Stage 4: Runtime
+# Stage 3: Runtime
 FROM node:20-alpine
 
 # Install dumb-init and openssl for proper signal handling and token generation
@@ -58,21 +46,14 @@ COPY --from=api-builder /app/web-api/node_modules ./web-api/node_modules
 # Copy API source code
 COPY web-api/ ./web-api/
 
-# Copy engine dependencies from stage 3
-COPY --from=engine-builder /app/engine/node_modules ./engine/node_modules
-
-# Copy engine source code
-COPY engine/ ./engine/
-
 # Create logs directory (cache will be mounted as volume)
 RUN mkdir -p /app/logs
 
-# Create startup script to run both engine and API
+# Create startup script to run API
 # Generate random application token on startup and export as environment variable
 RUN echo '#!/bin/sh' > /app/start.sh && \
     echo '# Generate random application token and export as environment variable' >> /app/start.sh && \
     echo 'export APPLICATION_TOKEN=$(openssl rand -hex 32)' >> /app/start.sh && \
-    echo 'cd /app/engine && node index.js &' >> /app/start.sh && \
     echo 'cd /app/web-api && node src/index.js' >> /app/start.sh && \
     chmod +x /app/start.sh
 
@@ -92,5 +73,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 # Use dumb-init to handle signals properly
 ENTRYPOINT ["dumb-init", "--"]
 
-# Run both engine and API
+# Run API
 CMD ["/app/start.sh"]

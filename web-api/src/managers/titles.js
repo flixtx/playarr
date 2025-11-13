@@ -37,12 +37,15 @@ import { DatabaseCollections, toCollectionName } from '../config/collections.js'
  */
 class TitlesManager extends BaseManager {
   /**
-   * @param {import('../services/database.js').DatabaseService} database - Database service instance
    * @param {import('./users.js').UserManager} userManager - User manager instance (for watchlist operations)
+   * @param {import('../repositories/TitleRepository.js').TitleRepository} titleRepo - Title repository
+   * @param {import('../repositories/ProviderRepository.js').ProviderRepository} providerRepo - Provider repository
    */
-  constructor(database, userManager) {
-    super('TitlesManager', database);
+  constructor(userManager, titleRepo, providerRepo) {
+    super('TitlesManager');
     this._userManager = userManager;
+    this._titleRepo = titleRepo;
+    this._providerRepo = providerRepo;
     this._titlesCollection = toCollectionName(DatabaseCollections.TITLES);
     this._titlesStreamsCollection = toCollectionName(DatabaseCollections.TITLES_STREAMS);
     this._settingsCollection = toCollectionName(DatabaseCollections.SETTINGS);
@@ -62,22 +65,23 @@ class TitlesManager extends BaseManager {
     try {
       // Get main titles from database service
       // With mapping configured, this returns a Map directly
-      const titlesData = await this._database.getDataList(this._titlesCollection);
+      const titlesArray = await this._titleRepo.findByQuery({});
       
-      if (!titlesData) {
-        this.logger.info('No titles found in main.json');
+      if (!titlesArray || titlesArray.length === 0) {
+        this.logger.info('No titles found');
         return new Map();
       }
 
-      // Should always be a Map when mapping is configured
-      if (titlesData instanceof Map) {
-        this.logger.info(`Loaded ${titlesData.size} titles from main.json`);
-        return titlesData;
+      // Convert array to Map
+      const titlesMap = new Map();
+      for (const title of titlesArray) {
+        if (title.title_key) {
+          titlesMap.set(title.title_key, title);
+        }
       }
-
-      // This should never happen if mapping is configured correctly
-      this.logger.warn('Titles data is not a Map - mapping may not be configured correctly');
-      return new Map();
+      
+      this.logger.info(`Loaded ${titlesMap.size} titles`);
+      return titlesMap;
     } catch (error) {
       this.logger.error('Error loading titles:', error);
       return new Map();
@@ -117,7 +121,7 @@ class TitlesManager extends BaseManager {
   async _getEnabledProviders() {
     try {
       // Get all providers from database (cached by database service)
-      const providers = await this._database.getDataList(this._providersCollection);
+      const providers = await this._providerRepo.findByQuery({});
       
       if (!providers || providers.length === 0) {
         return new Set();
@@ -355,11 +359,8 @@ class TitlesManager extends BaseManager {
       // Build MongoDB query
       const mongoQuery = this._buildTitlesQuery({ mediaType, searchQuery, yearConfig, startsWith });
 
-      // Get MongoDB collection directly for efficient querying
-      const collection = this._database.getCollection('titles');
-
       // Get total count for pagination (before watchlist filter, as watchlist is applied in memory)
-      let totalCount = await collection.countDocuments(mongoQuery);
+      let totalCount = await this._titleRepo.count(mongoQuery);
 
       // Fetch all matching titles (we need to filter by watchlist in memory)
       // But limit to a reasonable maximum to avoid memory issues
@@ -367,25 +368,28 @@ class TitlesManager extends BaseManager {
       const MAX_TITLES_FOR_WATCHLIST_FILTER = 10000;
       const shouldLimitForWatchlist = watchlist !== null && totalCount > MAX_TITLES_FOR_WATCHLIST_FILTER;
       
-      let titlesCursor = collection.find(mongoQuery).sort({ title: 1 });
+      // Build findMany options
+      const findOptions = {
+        sort: { title: 1 }
+      };
       
       // If watchlist filter is active and we have too many results, we need to load more
       // Otherwise, we can paginate at MongoDB level
       if (watchlist === null && !shouldLimitForWatchlist) {
         // No watchlist filter - use MongoDB pagination
-        const skip = (page - 1) * perPage;
-        titlesCursor = titlesCursor.skip(skip).limit(perPage);
+        findOptions.skip = (page - 1) * perPage;
+        findOptions.limit = perPage;
       } else {
         // Watchlist filter active - need to load all matching titles to filter
         // But limit to prevent memory issues
         if (totalCount > MAX_TITLES_FOR_WATCHLIST_FILTER) {
           this.logger.warn(`Too many titles (${totalCount}) for watchlist filtering. Limiting to ${MAX_TITLES_FOR_WATCHLIST_FILTER}`);
-          titlesCursor = titlesCursor.limit(MAX_TITLES_FOR_WATCHLIST_FILTER);
+          findOptions.limit = MAX_TITLES_FOR_WATCHLIST_FILTER;
           totalCount = MAX_TITLES_FOR_WATCHLIST_FILTER;
         }
       }
 
-      const titlesData = await titlesCursor.toArray();
+      const titlesData = await this._titleRepo.findMany(mongoQuery, findOptions);
 
       // Filter by watchlist if needed
       let filteredTitles = titlesData;
@@ -491,8 +495,7 @@ class TitlesManager extends BaseManager {
   async getTitleDetails(titleKey, user = null) {
     try {
       // Query MongoDB directly for just this title
-      const collection = this._database.getCollection('titles');
-      const titleData = await collection.findOne({ title_key: titleKey });
+      const titleData = await this._titleRepo.findOneByQuery({ title_key: titleKey });
 
       if (!titleData) {
         return {
@@ -578,9 +581,7 @@ class TitlesManager extends BaseManager {
 
       if (similarKeys.length > 0) {
         // Query MongoDB for only the similar titles
-        const similarTitles = await collection.find({
-          title_key: { $in: similarKeys }
-        }).toArray();
+        const similarTitles = await this._titleRepo.findByTitleKeys(similarKeys);
 
         const seenKeys = new Set();
         for (const similarTitle of similarTitles) {
@@ -667,10 +668,10 @@ class TitlesManager extends BaseManager {
       }
 
       // Query MongoDB directly for only the titles we need to verify
-      const collection = this._database.getCollection('titles');
-      const existingTitles = await collection.find({
-        title_key: { $in: titleKeys }
-      }).project({ title_key: 1, _id: 0 }).toArray(); // Only need title_key for existence check
+      const existingTitles = await this._titleRepo.findMany(
+        { title_key: { $in: titleKeys } },
+        { projection: { title_key: 1, _id: 0 } }
+      );
 
       // Create a Set of existing title keys for quick lookup
       const existingKeys = new Set(existingTitles.map(t => t.title_key));

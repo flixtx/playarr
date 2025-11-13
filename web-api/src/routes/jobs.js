@@ -6,10 +6,10 @@ import BaseRouter from './BaseRouter.js';
 class JobsRouter extends BaseRouter {
   /**
    * @param {JobsManager} jobsManager - Jobs manager instance
-   * @param {DatabaseService} database - Database service instance
+   * @param {import('../middleware/Middleware.js').default} middleware - Middleware instance
    */
-  constructor(jobsManager, database) {
-    super(database, 'JobsRouter');
+  constructor(jobsManager, middleware) {
+    super(middleware, 'JobsRouter');
     this._jobsManager = jobsManager;
   }
 
@@ -21,7 +21,7 @@ class JobsRouter extends BaseRouter {
      * GET /api/jobs
      * List all jobs with details and status (admin only)
      */
-    this.router.get('/', this._requireAdmin, async (req, res) => {
+    this.router.get('/', this.middleware.requireAdmin, async (req, res) => {
       try {
         this.logger.debug('Calling getAllJobs() from JobsManager');
         const result = await this._jobsManager.getAllJobs();
@@ -36,7 +36,7 @@ class JobsRouter extends BaseRouter {
      * POST /api/jobs/:jobName/trigger
      * Trigger a job manually (admin only)
      */
-    this.router.post('/:jobName/trigger', this._requireAdmin, async (req, res) => {
+    this.router.post('/:jobName/trigger', this.middleware.requireAdmin, async (req, res) => {
       try {
         const { jobName } = req.params;
 

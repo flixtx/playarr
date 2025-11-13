@@ -6,10 +6,10 @@ import BaseRouter from './BaseRouter.js';
 class TitlesRouter extends BaseRouter {
   /**
    * @param {TitlesManager} titlesManager - Titles manager instance
-   * @param {DatabaseService} database - Database service instance
+   * @param {import('../middleware/Middleware.js').default} middleware - Middleware instance
    */
-  constructor(titlesManager, database) {
-    super(database, 'TitlesRouter');
+  constructor(titlesManager, middleware) {
+    super(middleware, 'TitlesRouter');
     this._titlesManager = titlesManager;
   }
 
@@ -21,7 +21,7 @@ class TitlesRouter extends BaseRouter {
      * GET /api/titles
      * Get paginated list of titles with filtering
      */
-    this.router.get('/', this._requireAuth, async (req, res) => {
+    this.router.get('/', this.middleware.requireAuth, async (req, res) => {
       try {
         const {
           page = 1,
@@ -54,7 +54,7 @@ class TitlesRouter extends BaseRouter {
      * GET /api/titles/:title_key
      * Get detailed information for a specific title
      */
-    this.router.get('/:title_key', this._requireAuth, async (req, res) => {
+    this.router.get('/:title_key', this.middleware.requireAuth, async (req, res) => {
       try {
         const { title_key } = req.params;
         const result = await this._titlesManager.getTitleDetails(title_key, req.user);
@@ -68,7 +68,7 @@ class TitlesRouter extends BaseRouter {
      * PUT /api/titles/:title_key/watchlist
      * Update watchlist status for a single title
      */
-    this.router.put('/:title_key/watchlist', this._requireAuth, async (req, res) => {
+    this.router.put('/:title_key/watchlist', this.middleware.requireAuth, async (req, res) => {
       try {
         const { title_key } = req.params;
         const { watchlist } = req.body;
@@ -88,7 +88,7 @@ class TitlesRouter extends BaseRouter {
      * PUT /api/titles/watchlist/bulk
      * Update watchlist status for multiple titles
      */
-    this.router.put('/watchlist/bulk', this._requireAuth, async (req, res) => {
+    this.router.put('/watchlist/bulk', this.middleware.requireAuth, async (req, res) => {
       try {
         const { titles } = req.body;
 

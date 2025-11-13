@@ -6,10 +6,11 @@ import { BaseManager } from './BaseManager.js';
  */
 class PlaylistManager extends BaseManager {
   /**
-   * @param {import('../services/database.js').DatabaseService} database - Database service instance
+   * @param {import('../repositories/TitleRepository.js').TitleRepository} titleRepo - Title repository
    */
-  constructor(database) {
-    super('PlaylistManager', database);
+  constructor(titleRepo) {
+    super('PlaylistManager');
+    this._titleRepo = titleRepo;
   }
 
   /**
@@ -33,10 +34,7 @@ class PlaylistManager extends BaseManager {
     }
 
     // Query MongoDB directly for only the watchlist titles
-    const collection = this._database.getCollection('titles');
-    const titles = await collection.find({
-      title_key: { $in: watchlistTitleKeys }
-    }).toArray();
+    const titles = await this._titleRepo.findByTitleKeys(watchlistTitleKeys);
 
     if (!titles || titles.length === 0) {
       return [];

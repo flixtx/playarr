@@ -1,20 +1,23 @@
-import axios from 'axios';
-import { BaseIPTVProvider } from './BaseIPTVProvider.js';
+import { BaseIPTVHandler } from './BaseIPTVHandler.js';
 
 /**
- * Apollo Group TV provider implementation
+ * Apollo Group TV handler implementation
  * Fetches movies and TV shows via M3U8 format
- * @extends {BaseIPTVProvider}
+ * @extends {BaseIPTVHandler}
  */
-export class AGTVProvider extends BaseIPTVProvider {
+export class AGTVHandler extends BaseIPTVHandler {
   /**
    * @param {Object} providerData - Provider configuration data
-   * @param {import('../services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service instance
-   * @param {import('../providers/TMDBProvider.js').TMDBProvider} tmdbProvider - TMDB provider instance for matching TMDB IDs (required)
+   * @param {import('../repositories/ProviderTitleRepository.js').ProviderTitleRepository} providerTitleRepo - Provider titles repository
+   * @param {import('../repositories/ProviderRepository.js').ProviderRepository} providerRepo - Provider repository
+   * @param {import('../managers/providers.js').ProvidersManager} providersManager - Providers manager for direct API calls
+   * @param {import('../managers/tmdb.js').TMDBManager} tmdbManager - TMDB manager (legacy, not used directly)
+   * @param {import('../handlers/TMDBHandler.js').TMDBHandler} tmdbHandler - TMDB handler instance (required)
+   * @param {number} [metadataBatchSize=500] - Batch size for processing metadata (default: 500)
    */
-  constructor(providerData, mongoData, tmdbProvider) {
-    // AGTV uses 10k batch size since everything is in-memory and extremely fast
-    super(providerData, mongoData, 500, tmdbProvider);
+  constructor(providerData, providerTitleRepo, providerRepo, providersManager, tmdbManager, tmdbHandler, metadataBatchSize = 500) {
+    // AGTV uses 500 batch size since everything is in-memory and extremely fast
+    super(providerData, providerTitleRepo, providerRepo, providersManager, tmdbManager, tmdbHandler, metadataBatchSize);
         
     /**
      * Configuration for each media type
@@ -41,7 +44,6 @@ export class AGTVProvider extends BaseIPTVProvider {
       }
     };
   }
-
 
   /**
    * @returns {string} 'agtv'
@@ -211,30 +213,7 @@ export class AGTVProvider extends BaseIPTVProvider {
   }
 
   /**
-   * Build M3U8 URL for a media type and optional page
-   * @private
-   * @param {string} type - Media type ('movies' or 'tvshows')
-   * @param {number} [page] - Page number for paginated types
-   * @returns {string} Full URL for fetching M3U8 content
-   */
-  _buildM3U8Url(type, page) {
-    const config = this._typeConfig[type];
-    const apiUrl = this.providerData.api_url;
-    const username = this.providerData.username;
-    const password = this.providerData.password;
-    const mediaTypeSegment = config.mediaTypeSegment;
-    
-    let url = `${apiUrl}/api/list/${username}/${password}/m3u8/${mediaTypeSegment}`;
-    
-    if (config.isPaginated && page) {
-      url += `/${page}`;
-    }
-    
-    return url;
-  }
-
-  /**
-   * Fetch titles metadata from AGTV provider via M3U8 (through server API)
+   * Fetch titles metadata from AGTV provider via M3U8 (using providersManager directly)
    * @private
    * @param {string} type - Media type ('movies' or 'tvshows')
    * @returns {Promise<Array>} Array of raw title objects
@@ -254,15 +233,9 @@ export class AGTVProvider extends BaseIPTVProvider {
 
       while (true) {
         try {
-          // Fetch M3U8 content from server API (rate limited)
-          let endpoint = `/api/provider/${this.providerId}/m3u8?type=${type}`;
-          if (page) {
-            endpoint += `&page=${page}`;
-          }
-          this.logger.debug(`Fetching M3U8 from server: ${this.providerId}/${type}${page ? `/${page}` : ''}`);
-          const m3u8Content = await this._makeGetRequestWithLimiter(endpoint, {
-            responseType: 'text'
-          });
+          // Fetch M3U8 content from providersManager (rate limiting handled by provider)
+          this.logger.debug(`Fetching M3U8 from providersManager: ${this.providerId}/${type}${page ? `/${page}` : ''}`);
+          const m3u8Content = await this.providersManager.fetchM3U8(this.providerId, type, page);
 
           const { titles, streamCount } = this._parseM3U8Content(m3u8Content, type);
 
@@ -294,12 +267,9 @@ export class AGTVProvider extends BaseIPTVProvider {
     } else {
       // Single endpoint (movies)
       try {
-        // Fetch M3U8 content from server API (rate limited)
-        const endpoint = `/api/provider/${this.providerId}/m3u8?type=${type}`;
-        this.logger.debug(`Fetching M3U8 from server: ${this.providerId}/${type}`);
-        const m3u8Content = await this._makeGetRequestWithLimiter(endpoint, {
-          responseType: 'text'
-        });
+        // Fetch M3U8 content from providersManager (rate limiting handled by provider)
+        this.logger.debug(`Fetching M3U8 from providersManager: ${this.providerId}/${type}`);
+        const m3u8Content = await this.providersManager.fetchM3U8(this.providerId, type, null);
 
         const { titles } = this._parseM3U8Content(m3u8Content, type);
         allTitles.push(...titles);
@@ -338,7 +308,6 @@ export class AGTVProvider extends BaseIPTVProvider {
     return shouldSkip;
   }
 
-
   /**
    * Process a single title: clean title name, match TMDB ID, build processed data, and push to processedTitles
    * @private
@@ -369,7 +338,7 @@ export class AGTVProvider extends BaseIPTVProvider {
       // Set title_id from idField for TMDB matching (AGTV uses stream_id as idField, which contains IMDB ID)
       title.title_id = title[config.idField];
 
-      // Match TMDB ID if needed (common logic from BaseIPTVProvider)
+      // Match TMDB ID if needed (common logic from BaseIPTVHandler)
       // This will set ignored flags on title if matching fails, but still return true
       await this._matchAndUpdateTMDBId(title, type, titleId);
 

@@ -7,10 +7,11 @@ import { DatabaseCollections, toCollectionName } from '../config/collections.js'
  */
 class StatsManager extends BaseManager {
   /**
-   * @param {import('../services/database.js').DatabaseService} database - Database service instance
+   * @param {import('../repositories/StatsRepository.js').StatsRepository} statsRepo - Stats repository
    */
-  constructor(database) {
-    super('StatsManager', database);
+  constructor(statsRepo) {
+    super('StatsManager');
+    this._statsRepo = statsRepo;
     this._statsCollection = toCollectionName(DatabaseCollections.STATS);
   }
 
@@ -51,11 +52,14 @@ class StatsManager extends BaseManager {
    */
   async _getStats() {
     try {
-      const statsData = await this._database.getDataList(this._statsCollection);
+      const statsDataObj = await this._statsRepo.getAsObject();
 
-      if (!statsData || statsData.length === 0) {
+      if (!statsDataObj || Object.keys(statsDataObj).length === 0) {
         return { providers: [] };
       }
+
+      // Convert object to array
+      const statsData = Object.values(statsDataObj);
 
       // Group stats by provider
       const statsByProvider = {};

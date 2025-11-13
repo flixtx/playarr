@@ -8,12 +8,18 @@ import { BaseJob } from './BaseJob.js';
  */
 export class SyncIPTVProviderTitlesJob extends BaseJob {
   /**
-   * @param {import('../services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service instance
-   * @param {Map<string, import('../providers/BaseIPTVProvider.js').BaseIPTVProvider>} providers - Map of providerId -> provider instance (already initialized)
-   * @param {import('../providers/TMDBProvider.js').TMDBProvider} tmdbProvider - TMDB provider singleton instance
+   * @param {string} jobName - Name identifier for this job (used in logging)
+   * @param {import('../repositories/ProviderRepository.js').ProviderRepository} providerRepo - Provider repository
+   * @param {import('../repositories/ProviderTitleRepository.js').ProviderTitleRepository} providerTitleRepo - Provider title repository
+   * @param {import('../repositories/TitleRepository.js').TitleRepository} titleRepo - Title repository
+   * @param {import('../repositories/TitleStreamRepository.js').TitleStreamRepository} titleStreamRepo - Title stream repository
+   * @param {import('../repositories/JobHistoryRepository.js').JobHistoryRepository} jobHistoryRepo - Job history repository
+   * @param {import('../managers/providers.js').ProvidersManager} providersManager - Providers manager for direct API calls
+   * @param {import('../managers/tmdb.js').TMDBManager} tmdbManager - TMDB manager for direct API calls
+   * @param {import('../providers/TMDBProvider.js').TMDBProvider} tmdbProvider - TMDB provider for direct API calls
    */
-  constructor(mongoData, providers, tmdbProvider) {
-    super('SyncIPTVProviderTitlesJob', mongoData, providers, tmdbProvider);
+  constructor(jobName, providerRepo, providerTitleRepo, titleRepo, titleStreamRepo, jobHistoryRepo, providersManager, tmdbManager, tmdbProvider) {
+    super(jobName, providerRepo, providerTitleRepo, titleRepo, titleStreamRepo, jobHistoryRepo, providersManager, tmdbManager, tmdbProvider);
   }
 
   /**
@@ -35,23 +41,35 @@ export class SyncIPTVProviderTitlesJob extends BaseJob {
       // Set status to "running" at start (after reading last_execution)
       await this.setJobStatus('running');
 
+      // Create handler instances for all providers
+      this.handlers = await this._createHandlers();
+      
+      if (this.handlers.size === 0) {
+        this.logger.warn('No handlers created. No providers configured or all failed to initialize.');
+        await this.setJobStatus('completed', {
+          providers_processed: 0,
+          results: []
+        });
+        return [];
+      }
+
       // Fetch metadata from all providers
       // Note: fetchMetadata() will load all provider titles internally for comparison
-      this.logger.info(`Starting metadata fetch process for ${this.providers.size} provider(s)...`);
+      this.logger.info(`Starting metadata fetch process for ${this.handlers.size} provider(s)...`);
       
       const results = await Promise.all(
-        Array.from(this.providers.entries()).map(async ([providerId, providerInstance]) => {
+        Array.from(this.handlers.entries()).map(async ([providerId, handler]) => {
           try {
-            this.logger.debug(`[${providerId}] Processing provider (${providerInstance.getProviderType()})`);
+            this.logger.debug(`[${providerId}] Processing provider (${handler.getProviderType()})`);
             this.logger.info(`Fetching metadata from provider ${providerId}...`);
             
             // Fetch movies and TV shows in parallel
             const [moviesCount, tvShowsCount] = await Promise.all([
-              providerInstance.fetchMetadata('movies').catch(err => {
+              handler.fetchMetadata('movies').catch(err => {
                 this.logger.error(`[${providerId}] Error fetching movies: ${err.message}`);
                 return 0;
               }),
-              providerInstance.fetchMetadata('tvshows').catch(err => {
+              handler.fetchMetadata('tvshows').catch(err => {
                 this.logger.error(`[${providerId}] Error fetching TV shows: ${err.message}`);
                 return 0;
               })
@@ -76,7 +94,7 @@ export class SyncIPTVProviderTitlesJob extends BaseJob {
 
       // Set status to completed on success with result
       await this.setJobStatus('completed', {
-        providers_processed: this.providers.size,
+        providers_processed: this.handlers.size,
         results: results
       });
 
@@ -96,8 +114,10 @@ export class SyncIPTVProviderTitlesJob extends BaseJob {
       // Note: fetchMetadata() updates _titlesCache via saveTitles(), so cleanup is needed
       try {
         this.logger.debug('Unloading titles from memory cache...');
-        for (const [providerId, providerInstance] of this.providers) {
-          providerInstance.unloadTitles();
+        if (this.handlers) {
+          for (const [providerId, handler] of this.handlers) {
+            handler.unloadTitles();
+          }
         }
         this.logger.debug('Memory cleanup completed');
       } catch (error) {

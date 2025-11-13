@@ -11,9 +11,8 @@ This document describes the MongoDB schema for Playarr, including entity structu
 5. [users](#users)
 6. [iptv_providers](#iptv_providers)
 7. [settings](#settings)
-8. [cache_policy](#cache_policy)
-9. [stats](#stats)
-10. [job_history](#job_history)
+8. [stats](#stats)
+9. [job_history](#job_history)
 
 ---
 
@@ -431,56 +430,6 @@ db.settings.updateOne(
 
 ---
 
-## cache_policy
-
-Cache expiration policies for different API endpoints (one document per cache path).
-
-### Schema
-
-```javascript
-{
-  _id: String,                       // Cache path key (e.g., "tmdb/search/movie", "agtv/tvshows/metadata")
-  value: Number | null,               // TTL value in hours (Number) or null for no cache
-  createdAt: ISODate,                // Document creation timestamp
-  lastUpdated: ISODate               // Last update timestamp
-}
-```
-
-### Indexes
-
-| Index | Type | Purpose |
-|-------|------|---------|
-| `{ _id: 1 }` | Unique | The `_id` field is automatically indexed in MongoDB. Since `_id` is the cache path key, lookups by path are O(1). |
-
-### Relations
-
-- **No direct relations** - Cache policies are application-level configuration, not related to other collections.
-
-### Query Examples
-
-```javascript
-// Get cache policy for a specific path
-db.cache_policy.findOne({ _id: "tmdb/search/movie" })
-
-// Get all cache policies
-db.cache_policy.find({})
-
-// Find policies with TTL (not null)
-db.cache_policy.find({ value: { $ne: null } })
-```
-
-### Common Cache Paths
-
-- `tmdb/search/movie`: TMDB movie search
-- `tmdb/search/tv`: TMDB TV search
-- `tmdb/movie/details`: TMDB movie details
-- `tmdb/tv/details`: TMDB TV details
-- `tmdb/tv/season`: TMDB TV season data
-- `agtv/movies/metadata`: AGTV movies metadata
-- `agtv/tvshows/metadata`: AGTV TV shows metadata
-
----
-
 ## stats
 
 API statistics and metrics (single document collection).
@@ -532,7 +481,7 @@ Job execution tracking and status management for engine jobs.
 ```javascript
 {
   _id: ObjectId,                     // MongoDB auto-generated ID
-  job_name: String,                  // Job name: "ProcessProvidersTitlesJob" | "ProcessMainTitlesJob" | "MonitorConfigurationJob" | "PurgeProviderCacheJob"
+  job_name: String,                  // Job name: "ProcessProvidersTitlesJob" | "ProcessMainTitlesJob" | "MonitorConfigurationJob"
   provider_id: String,               // Optional, for provider-specific jobs
   status: String,                    // Job status: "running" | "cancelled" | "completed" | "failed"
   last_execution: ISODate,           // Last execution timestamp
@@ -610,7 +559,7 @@ provider_categories (1) ──< (many) provider_titles
 
 1. **Embedded Streams Summary**: The `titles.streams` field contains a lightweight summary to avoid joins for common queries. For movies: `{ stream_id: [provider_ids] }`. For TV shows: `{ stream_id: { air_date, name, overview, still_path, sources: [provider_ids] } }` (preserves episode metadata). Full stream details are in `title_streams`.
 
-2. **One Document Per Key**: `settings` and `cache_policy` use one document per key-value pair for efficient individual key lookups.
+2. **One Document Per Key**: `settings` uses one document per key-value pair for efficient individual key lookups.
 
 3. **Title Key as Foreign Key**: `title_key` is used consistently across collections (`titles`, `title_streams`, `provider_titles`, `users.watchlist`) as the primary relationship key.
 
@@ -625,7 +574,7 @@ provider_categories (1) ──< (many) provider_titles
 - `users.username`: Ensures unique usernames
 - `iptv_providers.id`: Ensures unique provider IDs
 - `provider_categories.provider_id + category_key`: Ensures unique categories per provider
-- `settings._id` and `cache_policy._id`: Automatically unique (MongoDB default)
+- `settings._id`: Automatically unique (MongoDB default)
 
 ### Compound Indexes
 Used for common query patterns:

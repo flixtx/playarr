@@ -22,22 +22,6 @@ export const DataProvider = {
 };
 
 /**
- * Get collection key field name
- */
-export function getCollectionKey(collection) {
-  const keys = {
-    [DatabaseCollections.CATEGORIES]: 'key',
-    [DatabaseCollections.TITLES]: 'key',
-    [DatabaseCollections.TITLES_STREAMS]: 'key',
-    [DatabaseCollections.IPTV_PROVIDERS]: 'id',
-    [DatabaseCollections.SETTINGS]: 'key',
-    [DatabaseCollections.STATS]: 'key',
-    [DatabaseCollections.USERS]: 'username',
-  };
-  return keys[collection] || 'key';
-}
-
-/**
  * Convert collection type to collection name with optional provider
  * Matches Python DatabaseCollections.to_collection_name()
  */
@@ -63,21 +47,5 @@ export function toCollectionName(collection, providerName = null) {
 
   // Return collection name as-is - provider IDs are already slugified at creation
   return collectionName;
-}
-
-/**
- * Determine collection type from collection name
- * Matches Python DatabaseCollections.from_collection_name()
- */
-export function fromCollectionName(collectionName) {
-  const collectionNames = Object.values(DatabaseCollections);
-  
-  for (const collection of collectionNames) {
-    if (collectionName.endsWith(collection)) {
-      return collection;
-    }
-  }
-  
-  throw new Error(`Invalid collection name: ${collectionName}`);
 }
 

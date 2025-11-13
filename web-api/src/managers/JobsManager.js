@@ -6,15 +6,15 @@ import { createLogger } from '../utils/logger.js';
  */
 export class JobsManager {
   /**
-   * @param {import('../services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service for job history
    * @param {Object} jobsConfig - Jobs configuration from jobs.json
-   * @param {import('bree').default} [bree] - Optional Bree instance for checking worker state
+   * @param {Object} [scheduler] - Optional scheduler instance for checking running jobs
+   * @param {import('../repositories/JobHistoryRepository.js').JobHistoryRepository} [jobHistoryRepo] - Optional job history repository
    */
-  constructor(mongoData, jobsConfig, bree = null) {
-    this.mongoData = mongoData;
+  constructor(jobsConfig, scheduler = null, jobHistoryRepo = null) {
     this.jobsConfig = jobsConfig;
     this.logger = createLogger('JobsManager');
-    this._bree = bree;
+    this._scheduler = scheduler;
+    this._jobHistoryRepo = jobHistoryRepo;
     
     // Build job metadata lookup from config
     this._jobMetadata = {};
@@ -43,23 +43,29 @@ export class JobsManager {
 
   /**
    * Check if a job is currently running
-   * Checks both Bree's worker state (most up-to-date) and MongoDB state
+   * Checks scheduler's running jobs map and MongoDB state
    * @param {string} engineJobName - Engine job name
    * @returns {Promise<boolean>} True if job is running
    */
   async isJobRunning(engineJobName) {
-    // First check Bree's worker state (most up-to-date runtime state)
-    if (this._bree && this._bree.workers && this._bree.workers.has(engineJobName)) {
+    // First check scheduler's running jobs map (most up-to-date runtime state)
+    if (this._scheduler && this._scheduler._runningJobs && this._scheduler._runningJobs.has(engineJobName)) {
       return true;
     }
     
-    // Fallback to MongoDB state (persisted job history)
-    if (!this.mongoData) {
-      throw new Error('MongoDB data service is not available');
-    }
-
+    // Check MongoDB state (persisted job history)
     const historyJobName = this.getJobHistoryName(engineJobName);
-    const jobHistory = await this.mongoData.getJobHistory(historyJobName);
+    let jobHistory = null;
+    
+    if (this._jobHistoryRepo) {
+      // Use repository if available
+      jobHistory = await this._jobHistoryRepo.findOneByQuery({ job_name: historyJobName });
+    } else {
+      // No repository available, can't check persisted state
+      this.logger.warn('No jobHistoryRepo available for checking job status');
+      return false;
+    }
+    
     return jobHistory && jobHistory.status === 'running';
   }
 

@@ -1,47 +1,33 @@
-import { BaseProvider } from './BaseProvider.js';
-import { createLogger } from '../utils/logger.js';
+import { BaseHandler } from './BaseHandler.js';
 import { extractYearFromTitle, extractBaseTitle, extractYearFromReleaseDate, generateTitleKey } from '../utils/titleUtils.js';
 
 /**
- * TMDB API provider
- * Singleton pattern - only one instance should exist
+ * TMDB API handler
  * Provides TMDB API integration for metadata enrichment
+ * Rate limiting and caching are handled by TMDBProvider
  */
-export class TMDBProvider extends BaseProvider {
-  static instance = null;
-
+export class TMDBHandler extends BaseHandler {
   /**
-   * Get or create the singleton instance of TMDBProvider
-   * @param {import('../services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service instance
-   * @returns {Promise<TMDBProvider>} Singleton instance
-   */
-  static async getInstance(mongoData) {
-    if (!TMDBProvider.instance) {
-      const providerData = {
-        id: 'tmdb',
-        type: 'tmdb',
-        api_rate: {
-          concurrent: 45,
-          duration_seconds: 1
-        }
-      };
-
-      TMDBProvider.instance = new TMDBProvider(providerData, mongoData);
-    }
-    return TMDBProvider.instance;
-  }
-
-  /**
-   * Private constructor - use getInstance() instead
+   * Constructor
    * @param {Object} providerData - Provider configuration data
-   * @param {import('../services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service instance
+   * @param {import('../repositories/TitleRepository.js').TitleRepository} titleRepo - Title repository
+   * @param {import('../repositories/TitleStreamRepository.js').TitleStreamRepository} titleStreamRepo - Title stream repository
+   * @param {import('../providers/TMDBProvider.js').TMDBProvider} tmdbProvider - TMDB provider for direct API calls
    */
-  constructor(providerData, mongoData) {
+  constructor(providerData, titleRepo, titleStreamRepo, tmdbProvider) {
     super(providerData, 'TMDB');
-    if (!mongoData) {
-      throw new Error('MongoDataService is required');
+    if (!titleRepo) {
+      throw new Error('TitleRepository is required');
     }
-    this.mongoData = mongoData;
+    if (!titleStreamRepo) {
+      throw new Error('TitleStreamRepository is required');
+    }
+    if (!tmdbProvider) {
+      throw new Error('TMDBProvider is required');
+    }
+    this.titleRepo = titleRepo;
+    this.titleStreamRepo = titleStreamRepo;
+    this.tmdbProvider = tmdbProvider;
     
     // In-memory cache for main titles
     // Loaded once at the start of job execution and kept in memory
@@ -80,12 +66,8 @@ export class TMDBProvider extends BaseProvider {
    * @returns {Promise<Object>} TMDB search results
    */
   async search(type, title, year = null) {
-    let endpoint = `/api/tmdb/search?type=${type}&title=${encodeURIComponent(title)}`;
-    if (year) {
-      endpoint += `&year=${year}`;
-    }
-    this.logger.debug(`Searching TMDB via server: ${type}/${title}${year ? `/${year}` : ''}`);
-    return await this._makeGetRequestWithLimiter(endpoint);
+    this.logger.debug(`Searching TMDB: ${type}/${title}${year ? `/${year}` : ''}`);
+    return await this.tmdbProvider.search(type, title, year);
   }
 
   /**
@@ -96,9 +78,8 @@ export class TMDBProvider extends BaseProvider {
    * @returns {Promise<Object>} TMDB find results with movie_results and tv_results arrays
    */
   async findByIMDBId(imdbId, type) {
-    const endpoint = `/api/tmdb/find/imdb?imdb_id=${encodeURIComponent(imdbId)}&type=${type}`;
-    this.logger.debug(`Finding TMDB by IMDB ID via server: ${imdbId}/${type}`);
-    return await this._makeGetRequestWithLimiter(endpoint);
+    this.logger.debug(`Finding TMDB by IMDB ID: ${imdbId}/${type}`);
+    return await this.tmdbProvider.findByIMDBId(imdbId, type);
   }
 
   
@@ -109,9 +90,8 @@ export class TMDBProvider extends BaseProvider {
    * @returns {Promise<Object>} Media details
    */
   async getDetails(type, tmdbId) {
-    const endpoint = `/api/tmdb/details?type=${type}&tmdb_id=${tmdbId}`;
-    this.logger.debug(`Getting TMDB details via server: ${type}/${tmdbId}`);
-    return await this._makeGetRequestWithLimiter(endpoint);
+    this.logger.debug(`Getting TMDB details: ${type}/${tmdbId}`);
+    return await this.tmdbProvider.getDetails(type, tmdbId);
   }
 
   /**
@@ -130,9 +110,8 @@ export class TMDBProvider extends BaseProvider {
    * @returns {Promise<Object>} Season details
    */
   async getTVShowSeasonDetails(tmdbId, seasonNumber) {
-    const endpoint = `/api/tmdb/season?tmdb_id=${tmdbId}&season=${seasonNumber}`;
-    this.logger.debug(`Getting TMDB season details via server: ${tmdbId}/S${seasonNumber}`);
-    return await this._makeGetRequestWithLimiter(endpoint);
+    this.logger.debug(`Getting TMDB season details: ${tmdbId}/S${seasonNumber}`);
+    return await this.tmdbProvider.getSeasonDetails(tmdbId, seasonNumber);
   }
 
   /**
@@ -143,9 +122,8 @@ export class TMDBProvider extends BaseProvider {
    * @returns {Promise<Object>} Similar media results with pagination info
    */
   async getSimilar(type, tmdbId, page = 1) {
-    const endpoint = `/api/tmdb/similar?type=${type}&tmdb_id=${tmdbId}&page=${page}`;
-    this.logger.debug(`Getting TMDB similar via server: ${type}/${tmdbId}/${page}`);
-    return await this._makeGetRequestWithLimiter(endpoint);
+    this.logger.debug(`Getting TMDB similar: ${type}/${tmdbId}/${page}`);
+    return await this.tmdbProvider.getSimilar(type, tmdbId, page);
   }
 
   /**
@@ -221,7 +199,7 @@ export class TMDBProvider extends BaseProvider {
    */
   async loadMainTitles(query = {}) {
     try {
-      const allMainTitles = await this.mongoData.getMainTitles(query);
+      const allMainTitles = await this.titleRepo.findByQuery(query);
       this._mainTitlesCache = allMainTitles;
       return allMainTitles;
     } catch (error) {
@@ -252,7 +230,7 @@ export class TMDBProvider extends BaseProvider {
    */
   async getMainTitlesByKeys(titleKeys) {
     try {
-      return await this.mongoData.getMainTitlesByKeys(titleKeys);
+      return await this.titleRepo.findByKeys(titleKeys, 'title_key');
     } catch (error) {
       this.logger.error(`Error loading main titles by keys from MongoDB: ${error.message}`);
       return [];
@@ -606,7 +584,7 @@ export class TMDBProvider extends BaseProvider {
       // Save streams to MongoDB
       if (allStreams.length > 0) {
         try {
-          const result = await this.mongoData.saveTitleStreams(allStreams);
+          const result = await this.titleStreamRepo.bulkSave(allStreams, { addTimestamps: true });
           this.logger.debug(`Saved ${result.inserted + result.updated} accumulated stream entries via progress callback (${result.inserted} inserted, ${result.updated} updated)`);
           // Clear saved streams
           allStreams.length = 0;
@@ -687,7 +665,7 @@ export class TMDBProvider extends BaseProvider {
     // Final save of streams to MongoDB
     if (allStreams.length > 0) {
       try {
-        const result = await this.mongoData.saveTitleStreams(allStreams);
+        const result = await this.titleStreamRepo.bulkSave(allStreams, { addTimestamps: true });
         this.logger.info(`Saved ${result.inserted + result.updated} stream entries to MongoDB (${result.inserted} inserted, ${result.updated} updated)`);
       } catch (error) {
         this.logger.error(`Error saving streams to MongoDB: ${error.message}`);
@@ -846,10 +824,10 @@ export class TMDBProvider extends BaseProvider {
 
     try {
       // Save to MongoDB using bulk operations
-      const result = await this.mongoData.saveMainTitles(processedTitles);
+      const result = await this.titleRepo.bulkSave(processedTitles, { addTimestamps: true });
       
       // Reload from MongoDB to get updated cache (includes all titles, not just new ones)
-      const allTitles = await this.mongoData.getMainTitles();
+      const allTitles = await this.titleRepo.findByQuery({});
       this._mainTitlesCache = allTitles;
       
       this.logger.info(`Saved ${result.inserted + result.updated} main titles to MongoDB (${result.inserted} inserted, ${result.updated} updated, total: ${allTitles.length} titles)`);
@@ -1092,52 +1070,9 @@ export class TMDBProvider extends BaseProvider {
     }
   }
 
-  /**
-   * Delete title streams for specific categories (batch operation)
-   * @param {Array<string>} providerIds - Array of provider IDs
-   * @param {Array<string>} categoryKeys - Array of category keys
-   * @returns {Promise<number>} Number of deleted streams
-   */
-  async deleteTitleStreamsByCategories(providerIds, categoryKeys) {
-    if (!providerIds || providerIds.length === 0 || !categoryKeys || categoryKeys.length === 0) {
-      return 0;
-    }
-    return await this.mongoData.deleteTitleStreamsByCategories(providerIds, categoryKeys);
-  }
-
-  /**
-   * Remove providers from all title sources (when providers are disabled)
-   * More efficient: queries title_streams first, then removes providers from titles.streams
-   * @param {Array<string>} providerIds - Array of provider IDs to remove
-   * @returns {Promise<{titlesUpdated: number, streamsRemoved: number, titleKeys: Array<string>}>}
-   */
-  async removeProvidersFromAllTitleSources(providerIds) {
-    if (!providerIds || providerIds.length === 0) {
-      return { titlesUpdated: 0, streamsRemoved: 0, titleKeys: [] };
-    }
-    return await this.mongoData.removeProvidersFromAllTitleSources(providerIds);
-  }
-
-  /**
-   * Remove provider from title sources for disabled categories
-   * More efficient: queries provider_titles directly to find disabled category titles
-   * @param {string} providerId - Provider ID
-   * @param {Object} enabledCategories - Object with movies and tvshows arrays of enabled category keys
-   * @returns {Promise<{titlesUpdated: number, streamsRemoved: number, titleKeys: Array<string>}>}
-   */
-  async removeProviderFromTitleSourcesByDisabledCategories(providerId, enabledCategories) {
-    return await this.mongoData.removeProviderFromTitleSourcesByDisabledCategories(providerId, enabledCategories);
-  }
-
-  /**
-   * Delete titles that have no streams left in title_streams collection
-   * More efficient: checks title_streams collection instead of titles.streams
-   * @param {Array<string>} titleKeys - Array of title_key values to check
-   * @returns {Promise<number>} Number of deleted titles
-   */
-  async deleteTitlesWithoutStreams(titleKeys) {
-    return await this.mongoData.deleteTitlesWithoutStreams(titleKeys);
-  }
+  // Note: Composite operations (deleteTitleStreamsByCategories, removeProvidersFromAllTitleSources,
+  // removeProviderFromTitleSourcesByDisabledCategories, deleteTitlesWithoutStreams) have been moved
+  // to ProvidersManager. These methods are no longer needed in TMDBHandler.
 
 }
 

@@ -8,12 +8,12 @@ import { DatabaseCollections, toCollectionName } from '../config/collections.js'
  */
 class XtreamManager extends BaseManager {
   /**
-   * @param {import('../services/database.js').DatabaseService} database - Database service instance
    * @param {import('./titles.js').TitlesManager} titlesManager - Titles manager instance
    */
-  constructor(database, titlesManager) {
-    super('XtreamManager', database);
+  constructor(titlesManager) {
+    super('XtreamManager');
     this._titlesManager = titlesManager;
+    this._titleRepo = titlesManager._titleRepo;
     this._titlesCollection = toCollectionName(DatabaseCollections.TITLES);
   }
 
@@ -38,10 +38,7 @@ class XtreamManager extends BaseManager {
     }
 
     // Query MongoDB directly for only the watchlist titles
-    const collection = this._database.getCollection('titles');
-    const titles = await collection.find({
-      title_key: { $in: watchlistTitleKeys }
-    }).toArray();
+    const titles = await this._titleRepo.findByTitleKeys(watchlistTitleKeys);
 
     if (!titles || titles.length === 0) {
       return new Map();

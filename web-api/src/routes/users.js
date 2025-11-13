@@ -6,10 +6,10 @@ import BaseRouter from './BaseRouter.js';
 class UsersRouter extends BaseRouter {
   /**
    * @param {UserManager} userManager - User manager instance
-   * @param {DatabaseService} database - Database service instance
+   * @param {import('../middleware/Middleware.js').default} middleware - Middleware instance
    */
-  constructor(userManager, database) {
-    super(database, 'UsersRouter');
+  constructor(userManager, middleware) {
+    super(middleware, 'UsersRouter');
     this._userManager = userManager;
   }
 
@@ -21,7 +21,7 @@ class UsersRouter extends BaseRouter {
      * GET /api/users
      * List all users (admin only)
      */
-    this.router.get('/', this._requireAdmin, async (req, res) => {
+    this.router.get('/', this.middleware.requireAdmin, async (req, res) => {
       try {
         const result = await this._userManager.getAllUsers();
         return res.status(result.statusCode).json(result.response);
@@ -34,7 +34,7 @@ class UsersRouter extends BaseRouter {
      * POST /api/users
      * Create a new user (admin only)
      */
-    this.router.post('/', this._requireAdmin, async (req, res) => {
+    this.router.post('/', this.middleware.requireAdmin, async (req, res) => {
       try {
         const { username, first_name, last_name, password, role } = req.body;
 
@@ -60,7 +60,7 @@ class UsersRouter extends BaseRouter {
      * GET /api/users/:username
      * Get user details (admin only)
      */
-    this.router.get('/:username', this._requireAdmin, async (req, res) => {
+    this.router.get('/:username', this.middleware.requireAdmin, async (req, res) => {
       try {
         const { username } = req.params;
         const result = await this._userManager.getUser(username);
@@ -74,7 +74,7 @@ class UsersRouter extends BaseRouter {
      * PUT /api/users/:username
      * Update user (admin only)
      */
-    this.router.put('/:username', this._requireAdmin, async (req, res) => {
+    this.router.put('/:username', this.middleware.requireAdmin, async (req, res) => {
       try {
         const { username } = req.params;
         const { first_name, last_name, status, role } = req.body;
@@ -96,7 +96,7 @@ class UsersRouter extends BaseRouter {
      * DELETE /api/users/:username
      * Deactivate user (admin only)
      */
-    this.router.delete('/:username', this._requireAdmin, async (req, res) => {
+    this.router.delete('/:username', this.middleware.requireAdmin, async (req, res) => {
       try {
         const { username } = req.params;
         const result = await this._userManager.deleteUser(username);
@@ -110,7 +110,7 @@ class UsersRouter extends BaseRouter {
      * POST /api/users/:username/reset-password
      * Reset user password (admin only)
      */
-    this.router.post('/:username/reset-password', this._requireAdmin, async (req, res) => {
+    this.router.post('/:username/reset-password', this.middleware.requireAdmin, async (req, res) => {
       try {
         const { username } = req.params;
         const { password } = req.body;

@@ -1,7 +1,4 @@
 import express from 'express';
-import { createRequireAuth } from '../middleware/auth.js';
-import { createRequireAdmin } from '../middleware/admin.js';
-import { createRequireApiKey } from '../middleware/apiKey.js';
 import { createLogger } from '../utils/logger.js';
 
 /**
@@ -12,14 +9,11 @@ import { createLogger } from '../utils/logger.js';
  */
 class BaseRouter {
   /**
-   * @param {DatabaseService} database - Database service instance
+   * @param {import('../middleware/Middleware.js').default} middleware - Middleware instance
    * @param {string} className - Name of the extending class (used for logger)
    */
-  constructor(database, className) {
-    this._database = database;
-    this._requireAuth = createRequireAuth(database);
-    this._requireAdmin = createRequireAdmin(this._requireAuth);
-    this._requireApiKey = createRequireApiKey(database);
+  constructor(middleware, className) {
+    this.middleware = middleware;
     this.router = express.Router();
     this.logger = createLogger(className);
   }

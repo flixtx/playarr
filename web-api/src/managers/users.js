@@ -9,10 +9,11 @@ import { createJWTToken } from '../utils/jwt.js';
  */
 class UserManager extends BaseManager {
   /**
-   * @param {import('../services/database.js').DatabaseService} database - Database service instance
+   * @param {import('../repositories/UserRepository.js').UserRepository} userRepo - User repository
    */
-  constructor(database) {
-    super('UserManager', database);
+  constructor(userRepo) {
+    super('UserManager');
+    this._userRepo = userRepo;
     this._usersCollection = toCollectionName(DatabaseCollections.USERS);
   }
 
@@ -23,9 +24,6 @@ class UserManager extends BaseManager {
   async initialize() {
     try {
       this.logger.info('Initializing user manager...');
-
-      // Create database indices
-      await this._database.createIndices();
 
       // Ensure default admin user exists
       await this._ensureDefaultAdminUser();
@@ -70,10 +68,9 @@ class UserManager extends BaseManager {
       // Mark as default admin
       user.isDefaultAdmin = true;
       // Update in storage
-      await this._database.updateData(
-        this._usersCollection,
-        { isDefaultAdmin: true },
-        { username: defaultUsername }
+      await this._userRepo.updateOne(
+        { username: defaultUsername },
+        { $set: { isDefaultAdmin: true } }
       );
       this.logger.info(`Default admin user '${defaultUsername}' created successfully`);
     } catch (error) {
@@ -188,7 +185,7 @@ class UserManager extends BaseManager {
   async getUserByUsername(username) {
     // Query database (database service handles caching internally)
     try {
-      const userData = await this._database.getData(this._usersCollection, { username });
+      const userData = await this._userRepo.findOneByQuery({ username });
       
       if (userData) {
         // Remove any MongoDB _id if present
@@ -216,7 +213,7 @@ class UserManager extends BaseManager {
   async getUserByApiKey(apiKey) {
     // Query database (database service handles caching internally)
     try {
-      const userData = await this._database.getData(this._usersCollection, { api_key: apiKey });
+      const userData = await this._userRepo.findOneByQuery({ api_key: apiKey });
       
       if (userData) {
         const { _id, ...user } = userData;
@@ -244,7 +241,7 @@ class UserManager extends BaseManager {
    */
   async getAllUsers() {
     try {
-      const usersData = await this._database.getDataList(this._usersCollection);
+      const usersData = await this._userRepo.findByQuery({});
       
       if (!usersData) {
         return { response: { users: [] }, statusCode: 200 };
@@ -367,7 +364,7 @@ class UserManager extends BaseManager {
       };
 
       // Save to database
-      await this._database.insertData(this._usersCollection, user);
+      await this._userRepo.insertOne(user);
 
       return user;
     } catch (error) {
@@ -424,10 +421,9 @@ class UserManager extends BaseManager {
       updateData.updated_at = user.updated_at;
 
       // Update database
-      await this._database.updateData(
-        this._usersCollection,
-        updateData,
-        { username }
+      await this._userRepo.updateOne(
+        { username },
+        { $set: updateData }
       );
 
       const userPublic = this._userToPublic(user);
@@ -477,10 +473,9 @@ class UserManager extends BaseManager {
         updated_at: new Date(),
       };
 
-      await this._database.updateData(
-        this._usersCollection,
-        updateData,
-        { username }
+      await this._userRepo.updateOne(
+        { username },
+        { $set: updateData }
       );
 
       return { response: { success: true }, statusCode: 200 };
@@ -512,10 +507,9 @@ class UserManager extends BaseManager {
         updated_at: user.updated_at,
       };
 
-      await this._database.updateData(
-        this._usersCollection,
-        updateData,
-        { username }
+      await this._userRepo.updateOne(
+        { username },
+        { $set: updateData }
       );
 
       return { response: { api_key: newApiKey }, statusCode: 200 };
@@ -663,10 +657,9 @@ class UserManager extends BaseManager {
         updated_at: new Date(),
       };
 
-      await this._database.updateData(
-        this._usersCollection,
-        updateData,
-        { username }
+      await this._userRepo.updateOne(
+        { username },
+        { $set: updateData }
       );
 
       user.watchlist = updatedWatchlist;

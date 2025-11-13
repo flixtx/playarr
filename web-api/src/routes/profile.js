@@ -6,10 +6,10 @@ import BaseRouter from './BaseRouter.js';
 class ProfileRouter extends BaseRouter {
   /**
    * @param {UserManager} userManager - User manager instance
-   * @param {DatabaseService} database - Database service instance
+   * @param {import('../middleware/Middleware.js').default} middleware - Middleware instance
    */
-  constructor(userManager, database) {
-    super(database, 'ProfileRouter');
+  constructor(userManager, middleware) {
+    super(middleware, 'ProfileRouter');
     this._userManager = userManager;
   }
 
@@ -21,7 +21,7 @@ class ProfileRouter extends BaseRouter {
      * GET /api/profile
      * Get current user's profile
      */
-    this.router.get('/', this._requireAuth, async (req, res) => {
+    this.router.get('/', this.middleware.requireAuth, async (req, res) => {
       try {
         const username = req.user.username;
         const result = await this._userManager.getProfile(username);
@@ -35,7 +35,7 @@ class ProfileRouter extends BaseRouter {
      * PUT /api/profile
      * Update current user's profile
      */
-    this.router.put('/', this._requireAuth, async (req, res) => {
+    this.router.put('/', this.middleware.requireAuth, async (req, res) => {
       try {
         const username = req.user.username;
         const { first_name, last_name } = req.body;
@@ -55,7 +55,7 @@ class ProfileRouter extends BaseRouter {
      * POST /api/profile/regenerate-api-key
      * Regenerate API key for current user
      */
-    this.router.post('/regenerate-api-key', this._requireAuth, async (req, res) => {
+    this.router.post('/regenerate-api-key', this.middleware.requireAuth, async (req, res) => {
       try {
         const username = req.user.username;
         const result = await this._userManager.regenerateApiKey(username);
@@ -69,7 +69,7 @@ class ProfileRouter extends BaseRouter {
      * POST /api/profile/change-password
      * Change password for current user (requires current password verification)
      */
-    this.router.post('/change-password', this._requireAuth, async (req, res) => {
+    this.router.post('/change-password', this.middleware.requireAuth, async (req, res) => {
       try {
         const username = req.user.username;
         const { current_password, new_password } = req.body;

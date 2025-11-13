@@ -7,10 +7,10 @@ import { getTokenExpireDays } from '../utils/jwt.js';
 class AuthRouter extends BaseRouter {
   /**
    * @param {UserManager} userManager - User manager instance
-   * @param {DatabaseService} database - Database service instance
+   * @param {import('../middleware/Middleware.js').default} middleware - Middleware instance
    */
-  constructor(userManager, database) {
-    super(database, 'AuthRouter');
+  constructor(userManager, middleware) {
+    super(middleware, 'AuthRouter');
     this._userManager = userManager;
   }
 
@@ -55,7 +55,7 @@ class AuthRouter extends BaseRouter {
      * POST /api/auth/logout
      * Logout user (clear cookie)
      */
-    this.router.post('/logout', this._requireAuth, async (req, res) => {
+    this.router.post('/logout', this.middleware.requireAuth, async (req, res) => {
       try {
         const result = await this._userManager.logout();
 
@@ -77,7 +77,7 @@ class AuthRouter extends BaseRouter {
      * GET /api/auth/verify
      * Verify authentication status
      */
-    this.router.get('/verify', this._requireAuth, async (req, res) => {
+    this.router.get('/verify', this.middleware.requireAuth, async (req, res) => {
       try {
         // User is attached to request by requireAuth middleware
         const username = req.user.username;

@@ -42,10 +42,10 @@ function getBaseUrl(req) {
 class PlaylistRouter extends BaseRouter {
   /**
    * @param {PlaylistManager} playlistManager - Playlist manager instance
-   * @param {DatabaseService} database - Database service instance
+   * @param {import('../middleware/Middleware.js').default} middleware - Middleware instance
    */
-  constructor(playlistManager, database) {
-    super(database, 'PlaylistRouter');
+  constructor(playlistManager, middleware) {
+    super(middleware, 'PlaylistRouter');
     this._playlistManager = playlistManager;
   }
 
@@ -57,7 +57,7 @@ class PlaylistRouter extends BaseRouter {
      * GET /api/playlist/:title_type
      * Get M3U8 playlist for movies or tvshows (requires API key)
      */
-    this.router.get('/:title_type', this._requireApiKey, async (req, res) => {
+    this.router.get('/:title_type', this.middleware.requireApiKey, async (req, res) => {
       try {
         const { title_type } = req.params;
 
@@ -81,7 +81,7 @@ class PlaylistRouter extends BaseRouter {
      * GET /api/playlist/:title_type/data
      * Get media files mapping for movies or tvshows (requires API key)
      */
-    this.router.get('/:title_type/data', this._requireApiKey, async (req, res) => {
+    this.router.get('/:title_type/data', this.middleware.requireApiKey, async (req, res) => {
       try {
         const { title_type } = req.params;
 

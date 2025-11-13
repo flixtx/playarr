@@ -1,18 +1,22 @@
-import { BaseIPTVProvider } from './BaseIPTVProvider.js';
+import { BaseIPTVHandler } from './BaseIPTVHandler.js';
 
 /**
- * Xtream Codec provider implementation
+ * Xtream Codec handler implementation
  * Fetches movies and TV shows via Xtream API with extended information support
- * @extends {BaseIPTVProvider}
+ * @extends {BaseIPTVHandler}
  */
-export class XtreamProvider extends BaseIPTVProvider {
+export class XtreamHandler extends BaseIPTVHandler {
   /**
    * @param {Object} providerData - Provider configuration data
-   * @param {import('../services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service instance
-   * @param {import('../providers/TMDBProvider.js').TMDBProvider} tmdbProvider - TMDB provider instance for matching TMDB IDs (required)
+   * @param {import('../repositories/ProviderTitleRepository.js').ProviderTitleRepository} providerTitleRepo - Provider titles repository
+   * @param {import('../repositories/ProviderRepository.js').ProviderRepository} providerRepo - Provider repository
+   * @param {import('../managers/providers.js').ProvidersManager} providersManager - Providers manager for direct API calls
+   * @param {import('../managers/tmdb.js').TMDBManager} tmdbManager - TMDB manager (legacy, not used directly)
+   * @param {import('../handlers/TMDBHandler.js').TMDBHandler} tmdbHandler - TMDB handler instance (required)
+   * @param {number} [metadataBatchSize=100] - Batch size for processing metadata (default: 100)
    */
-  constructor(providerData, mongoData, tmdbProvider) {
-    super(providerData, mongoData, undefined, tmdbProvider);
+  constructor(providerData, providerTitleRepo, providerRepo, providersManager, tmdbManager, tmdbHandler, metadataBatchSize = 100) {
+    super(providerData, providerTitleRepo, providerRepo, providersManager, tmdbManager, tmdbHandler, metadataBatchSize);
     
     // Xtream supports categories
     this.supportsCategories = true;
@@ -32,7 +36,6 @@ export class XtreamProvider extends BaseIPTVProvider {
         extendedInfoParam: 'vod_id',
         idField: 'stream_id',
         mediaEndpoint: 'movie',
-        shouldCheckUpdates: false, // Movies skip existing, no update check needed
         shouldSkip: this._shouldSkipMovies.bind(this),
         parseExtendedInfo: this._parseExtendedInfoMovies.bind(this)
       },
@@ -45,21 +48,8 @@ export class XtreamProvider extends BaseIPTVProvider {
         extendedInfoParam: 'series_id',
         idField: 'series_id',
         mediaEndpoint: 'series',
-        shouldCheckUpdates: false, // Not used - modification dates are checked during filtering
         shouldSkip: this._shouldSkipTVShows.bind(this),
         parseExtendedInfo: this._parseExtendedInfoTVShows.bind(this)
-      },
-      live: {
-        enabled: false, // Future support for live streams
-        categoryAction: 'get_live_categories',
-        metadataAction: 'get_live_streams',
-        dataKey: 'streams',
-        extendedInfoAction: null, // Live streams may not have extended info
-        extendedInfoParam: null,
-        idField: 'stream_id',
-        shouldCheckUpdates: false,
-        shouldSkip: this._shouldSkipLive.bind(this),
-        parseExtendedInfo: this._parseExtendedInfoLive.bind(this)
       }
     };
   }
@@ -87,22 +77,6 @@ export class XtreamProvider extends BaseIPTVProvider {
           return true; // Skip if not modified
         }
       }
-    }
-    
-    return false;
-  }
-
-  /**
-   * Check if a live stream title should be skipped (already exists)
-   * @private
-   * @param {TitleData} title - Title data to check
-   * @param {Object|null} existingTitle - Existing title object from DB (null if doesn't exist)
-   * @returns {boolean} True if title should be skipped
-   */
-  _shouldSkipLive(title, existingTitle) {
-    // Skip if already exists
-    if (existingTitle) {
-      return true;
     }
     
     return false;
@@ -220,16 +194,6 @@ export class XtreamProvider extends BaseIPTVProvider {
   }
 
   /**
-   * Parse and enrich extended info for live streams
-   * @private
-   * @param {TitleData} title - Title data to enrich
-   * @param {Object} extResponse - Extended info API response
-   */
-  _parseExtendedInfoLive(title, extResponse) {
-    // Live streams may not have extended info parsing
-  }
-
-  /**
    * @returns {string} 'xtream'
    * @override
    */
@@ -260,10 +224,8 @@ export class XtreamProvider extends BaseIPTVProvider {
     return `/${mediaEndpoint}/${username}/${password}/${resource}`;
   }
 
-
-
   /**
-   * Fetch titles metadata from server API
+   * Fetch titles metadata from providersManager (using direct calls instead of HTTP)
    * @private
    * @param {string} type - Media type ('movies', 'tvshows', or 'live')
    * @returns {Promise<Array>} Array of raw title objects
@@ -279,10 +241,9 @@ export class XtreamProvider extends BaseIPTVProvider {
       return [];
     }
 
-    // Fetch metadata from server API (rate limited)
-    const endpoint = `/api/provider/${this.providerId}/metadata?type=${type}`;
-    this.logger.debug(`Fetching metadata from server: ${this.providerId}/${type}`);
-    const response = await this._makeGetRequestWithLimiter(endpoint);
+    // Fetch metadata from providersManager (rate limiting handled by provider)
+    this.logger.debug(`Fetching metadata from providersManager: ${this.providerId}/${type}`);
+    const response = await this.providersManager.fetchMetadata(this.providerId, type);
     
     // Extract array from response (Xtream API may return object with dataKey or array directly)
     let titles = [];
@@ -291,7 +252,7 @@ export class XtreamProvider extends BaseIPTVProvider {
     } else if (response && response[config.dataKey]) {
       titles = response[config.dataKey];
     } else {
-      throw new Error(`Unexpected response format from server API for ${type}: expected array or object with ${config.dataKey}`);
+      throw new Error(`Unexpected response format from providersManager for ${type}: expected array or object with ${config.dataKey}`);
     }
     
     this.logger.info(`${type}: Loaded ${titles.length} titles`);
@@ -299,13 +260,13 @@ export class XtreamProvider extends BaseIPTVProvider {
     return titles;
   }
 
-
   /**
    * Process a single title: fetch extended info and clean title name
    * @private
    * @param {Object} title - Title object to process
    * @param {string} type - Media type ('movies', 'tvshows', or 'live')
-   * @returns {Promise<Object|null>} Processed title object or null if should be skipped
+   * @param {Array<Object>} processedTitles - Array to push processed titles to
+   * @returns {Promise<boolean>} true if processed and pushed, false if skipped/ignored
    */
   async _processSingleTitle(title, type, processedTitles) {
     const config = this._typeConfig[type];
@@ -326,10 +287,9 @@ export class XtreamProvider extends BaseIPTVProvider {
       try {
         this.logger.debug(`${type}: Fetching extended info for title ${titleId}`);
 
-        // Fetch extended info from server API (rate limited)
-        const endpoint = `/api/provider/${this.providerId}/extended/${titleId}?type=${type}`;
-        this.logger.debug(`Fetching extended info from server: ${this.providerId}/${type}/${titleId}`);
-        const fullResponseData = await this._makeGetRequestWithLimiter(endpoint);
+        // Fetch extended info from providersManager (rate limiting handled by provider)
+        this.logger.debug(`Fetching extended info from providersManager: ${this.providerId}/${type}/${titleId}`);
+        const fullResponseData = await this.providersManager.fetchExtendedInfo(this.providerId, type, titleId);
 
         if (config.parseExtendedInfo) {
           config.parseExtendedInfo(titleData, fullResponseData);
@@ -355,7 +315,7 @@ export class XtreamProvider extends BaseIPTVProvider {
     // Ensure type is set
     titleData.type = type;
 
-    // Match TMDB ID if needed (common logic from BaseIPTVProvider)
+    // Match TMDB ID if needed (common logic from BaseIPTVHandler)
     // This will set ignored flags on titleData if matching fails, but still return true
     await this._matchAndUpdateTMDBId(titleData, type, titleId);
 
@@ -392,6 +352,5 @@ export class XtreamProvider extends BaseIPTVProvider {
       ignored_reason: title.ignored_reason || null
     };
   }
-
 }
 

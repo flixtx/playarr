@@ -35,9 +35,24 @@ if (fsExtra.existsSync(apiLogPath)) {
 import { createLogger } from './utils/logger.js';
 
 // Import service classes
-import { MongoDatabaseService } from './services/mongodb-database.js';
 import { WebSocketService } from './services/websocket.js';
 import { MongoClient } from 'mongodb';
+
+// Import repositories
+import { ProviderTitleRepository } from './repositories/ProviderTitleRepository.js';
+import { TitleStreamRepository } from './repositories/TitleStreamRepository.js';
+import { TitleRepository } from './repositories/TitleRepository.js';
+import { ProviderRepository } from './repositories/ProviderRepository.js';
+import { JobHistoryRepository } from './repositories/JobHistoryRepository.js';
+import { SettingsRepository } from './repositories/SettingsRepository.js';
+import { UserRepository } from './repositories/UserRepository.js';
+import { StatsRepository } from './repositories/StatsRepository.js';
+import { EngineScheduler } from './engineScheduler.js';
+import jobsConfig from './jobs.json' with { type: 'json' };
+
+// Import job classes
+import { SyncIPTVProviderTitlesJob } from './jobs/SyncIPTVProviderTitlesJob.js';
+import { ProviderTitlesMonitorJob } from './jobs/ProviderTitlesMonitorJob.js';
 
 // Import manager classes
 import { UserManager } from './managers/users.js';
@@ -45,12 +60,14 @@ import { TitlesManager } from './managers/titles.js';
 import { SettingsManager } from './managers/settings.js';
 import { StatsManager } from './managers/stats.js';
 import { ProvidersManager } from './managers/providers.js';
-import { CategoriesManager } from './managers/categories.js';
 import { StreamManager } from './managers/stream.js';
 import { PlaylistManager } from './managers/playlist.js';
 import { TMDBManager } from './managers/tmdb.js';
 import { XtreamManager } from './managers/xtream.js';
 import { JobsManager } from './managers/jobs.js';
+
+// Import middleware
+import Middleware from './middleware/Middleware.js';
 
 // Import router classes
 import AuthRouter from './routes/auth.js';
@@ -59,7 +76,6 @@ import ProfileRouter from './routes/profile.js';
 import SettingsRouter from './routes/settings.js';
 import StatsRouter from './routes/stats.js';
 import TitlesRouter from './routes/titles.js';
-import CategoriesRouter from './routes/categories.js';
 import ProvidersRouter from './routes/providers.js';
 import StreamRouter from './routes/stream.js';
 import PlaylistRouter from './routes/playlist.js';
@@ -67,10 +83,9 @@ import TMDBRouter from './routes/tmdb.js';
 import HealthcheckRouter from './routes/healthcheck.js';
 import XtreamRouter from './routes/xtream.js';
 import JobsRouter from './routes/jobs.js';
-import ProviderApiRouter from './routes/providerApi.js';
-import { ProviderApiStorage } from './services/providerApiStorage.js';
 import { XtreamProvider } from './providers/XtreamProvider.js';
 import { AGTVProvider } from './providers/AGTVProvider.js';
+import { TMDBProvider } from './providers/TMDBProvider.js';
 import { DataProvider } from './config/collections.js';
 
 const app = express();
@@ -83,7 +98,7 @@ const server = http.createServer(app);
 // Module-level variables for graceful shutdown
 let webSocketService = null;
 let mongoClient = null;
-let database = null;
+let jobScheduler = null;
 
 // Middleware
 app.use(cors({
@@ -125,58 +140,157 @@ async function initialize() {
       throw new Error(`MongoDB connection failed: ${error.message}`);
     }
 
-    // 2. Create MongoDatabaseService (replaces FileStorageService + DatabaseService)
-    database = new MongoDatabaseService(mongoClient, dbName);
-    await database.initialize();
-    logger.info('MongoDB database service initialized');
+    // 2. Create all repository instances
+    const providerTitleRepo = new ProviderTitleRepository(mongoClient);
+    const titleStreamRepo = new TitleStreamRepository(mongoClient);
+    const titleRepo = new TitleRepository(mongoClient);
+    const providerRepo = new ProviderRepository(mongoClient);
+    const jobHistoryRepo = new JobHistoryRepository(mongoClient);
+    const settingsRepo = new SettingsRepository(mongoClient);
+    const userRepo = new UserRepository(mongoClient);
+    const statsRepo = new StatsRepository(mongoClient);
+    logger.info('All repositories created');
+
+    // 2.1. Initialize database indexes for all repositories
+    logger.info('Initializing database indexes...');
+    try {
+      await Promise.all([
+        titleRepo.initializeIndexes(),
+        providerTitleRepo.initializeIndexes(),
+        titleStreamRepo.initializeIndexes(),
+        userRepo.initializeIndexes(),
+        providerRepo.initializeIndexes(),
+        jobHistoryRepo.initializeIndexes(),
+        settingsRepo.initializeIndexes(),
+        // statsRepo doesn't need indexes (single document collection)
+        // cachePolicyRepo is skipped (will be removed)
+      ]);
+      logger.info('All database indexes initialized');
+    } catch (error) {
+      logger.error(`Error initializing database indexes: ${error.message}`);
+      // Don't throw - allow app to start even if index creation fails
+      // Indexes will be created on next startup or can be created manually
+    }
 
     webSocketService = new WebSocketService();
 
-    // Initialize provider API disk storage (before managers that need it)
+    // Get cache directory for providers
     const cacheDir = process.env.CACHE_DIR || '/app/cache';
-    const providerApiStorage = new ProviderApiStorage(cacheDir);
 
-    // Initialize provider instances
-    const xtreamProvider = new XtreamProvider(database, providerApiStorage);
-    const agtvProvider = new AGTVProvider(database, providerApiStorage);
+    // Load all provider configurations from database
+    const allProviders = await providerRepo.findByQuery({}) || [];
+    logger.info(`Loaded ${allProviders.length} provider(s) from database`);
+
+    // Group providers by type for each provider type
+    const xtreamConfigs = {};
+    const agtvConfigs = {};
+    
+    for (const provider of allProviders) {
+      if (provider.deleted) continue; // Skip deleted providers
+      
+      if (provider.type === DataProvider.XTREAM) {
+        xtreamConfigs[provider.id] = provider;
+      } else if (provider.type === DataProvider.AGTV) {
+        agtvConfigs[provider.id] = provider;
+      }
+    }
+
+    // Initialize provider instances with their configs (singletons)
+    const xtreamProvider = new XtreamProvider(xtreamConfigs, cacheDir);
+    const agtvProvider = new AGTVProvider(agtvConfigs, cacheDir);
     const providerTypeMap = {
       [DataProvider.XTREAM]: xtreamProvider,
       [DataProvider.AGTV]: agtvProvider
     };
 
     // Step 2: Initialize managers (dependency order)
-    const userManager = new UserManager(database);
-    const titlesManager = new TitlesManager(database, userManager);
-    const settingsManager = new SettingsManager(database);
-    const statsManager = new StatsManager(database);
-    const jobsManager = new JobsManager(database);
-    const providersManager = new ProvidersManager(database, webSocketService, titlesManager, providerTypeMap);
-    const categoriesManager = new CategoriesManager(database, providersManager);
-    const streamManager = new StreamManager(database);
-    const playlistManager = new PlaylistManager(database);
-    const tmdbManager = new TMDBManager(database, settingsManager, providerApiStorage);
-    const xtreamManager = new XtreamManager(database, titlesManager);
+    const userManager = new UserManager(userRepo);
+    const settingsManager = new SettingsManager(settingsRepo);
+    
+    // Load TMDB API key from settings and initialize TMDB provider
+    const tmdbTokenKey = 'tmdb_token';
+    let tmdbApiKey = null;
+    try {
+      const apiKeyResult = await settingsManager.getSetting(tmdbTokenKey);
+      if (apiKeyResult.statusCode === 200 && apiKeyResult.response.value) {
+        tmdbApiKey = apiKeyResult.response.value;
+      }
+    } catch (error) {
+      logger.warn('Could not load TMDB API key on startup:', error.message);
+    }
+    const tmdbProvider = new TMDBProvider(tmdbApiKey, cacheDir);
+    const statsManager = new StatsManager(statsRepo);
+    const titlesManager = new TitlesManager(userManager, titleRepo, providerRepo);
+    
+    const providersManager = new ProvidersManager(
+      webSocketService,
+      titlesManager,
+      providerTypeMap,
+      providerTitleRepo,
+      titleStreamRepo,
+      titleRepo,
+      providerRepo
+    );
+    const streamManager = new StreamManager(titleStreamRepo, providerRepo);
+    const playlistManager = new PlaylistManager(titleRepo);
+    const tmdbManager = new TMDBManager(settingsManager, tmdbProvider);
+    const xtreamManager = new XtreamManager(titlesManager);
+    
+    // Create job instances with all dependencies
+    const jobInstances = new Map();
+    jobInstances.set('syncIPTVProviderTitles', new SyncIPTVProviderTitlesJob(
+      'syncIPTVProviderTitles',
+      providerRepo,
+      providerTitleRepo,
+      titleRepo,
+      titleStreamRepo,
+      jobHistoryRepo,
+      providersManager,
+      tmdbManager,
+      tmdbProvider
+    ));
+    jobInstances.set('providerTitlesMonitor', new ProviderTitlesMonitorJob(
+      'providerTitlesMonitor',
+      providerRepo,
+      providerTitleRepo,
+      titleRepo,
+      titleStreamRepo,
+      jobHistoryRepo,
+      providersManager,
+      tmdbManager,
+      tmdbProvider
+    ));
+    
+    // Initialize EngineScheduler with job instances
+    jobScheduler = new EngineScheduler(jobInstances, jobHistoryRepo);
+    await jobScheduler.initialize();
+    logger.info('Job scheduler initialized and started');
+    
+    // Initialize JobsManager (needs scheduler)
+    const jobsManager = new JobsManager(jobsConfig, jobScheduler, jobHistoryRepo);
 
     // Initialize user manager (creates default admin user)
     await userManager.initialize();
     logger.info('User manager initialized');
 
-    // Step 3: Initialize routers (with dependencies)
-    const authRouter = new AuthRouter(userManager, database);
-    const usersRouter = new UsersRouter(userManager, database);
-    const profileRouter = new ProfileRouter(userManager, database);
-    const settingsRouter = new SettingsRouter(settingsManager, database);
-    const statsRouter = new StatsRouter(statsManager, database);
-    const titlesRouter = new TitlesRouter(titlesManager, database);
-    const categoriesRouter = new CategoriesRouter(categoriesManager, database);
-    const providersRouter = new ProvidersRouter(providersManager, database);
-    const streamRouter = new StreamRouter(streamManager, database);
-    const providerApiRouter = new ProviderApiRouter(providersManager, database);
-    const playlistRouter = new PlaylistRouter(playlistManager, database);
-    const tmdbRouter = new TMDBRouter(tmdbManager, database);
-    const healthcheckRouter = new HealthcheckRouter(database, settingsManager);
-    const xtreamRouter = new XtreamRouter(xtreamManager, database, streamManager);
-    const jobsRouter = new JobsRouter(jobsManager, database);
+    // Step 3: Initialize middleware (after UserManager is initialized)
+    const middleware = new Middleware(userManager);
+    logger.info('Middleware initialized');
+
+    // Step 4: Initialize routers (with dependencies)
+    const authRouter = new AuthRouter(userManager, middleware);
+    const usersRouter = new UsersRouter(userManager, middleware);
+    const profileRouter = new ProfileRouter(userManager, middleware);
+    const settingsRouter = new SettingsRouter(settingsManager, middleware);
+    const statsRouter = new StatsRouter(statsManager, middleware);
+    const titlesRouter = new TitlesRouter(titlesManager, middleware);
+    const providersRouter = new ProvidersRouter(providersManager, middleware);
+    const streamRouter = new StreamRouter(streamManager, middleware);
+    const playlistRouter = new PlaylistRouter(playlistManager, middleware);
+    const tmdbRouter = new TMDBRouter(tmdbManager, middleware);
+    const healthcheckRouter = new HealthcheckRouter(settingsManager, middleware);
+    const xtreamRouter = new XtreamRouter(xtreamManager, streamManager, middleware);
+    const jobsRouter = new JobsRouter(jobsManager, middleware);
 
     // Initialize all routers
     authRouter.initialize();
@@ -185,7 +299,6 @@ async function initialize() {
     settingsRouter.initialize();
     statsRouter.initialize();
     titlesRouter.initialize();
-    categoriesRouter.initialize();
     providersRouter.initialize();
     streamRouter.initialize();
     playlistRouter.initialize();
@@ -193,9 +306,8 @@ async function initialize() {
     healthcheckRouter.initialize();
     xtreamRouter.initialize();
     jobsRouter.initialize();
-    providerApiRouter.initialize();
 
-    // Step 4: Register routes
+    // Step 5: Register routes
     app.use('/api/auth', authRouter.router);
     app.use('/api/users', usersRouter.router);
     app.use('/api/profile', profileRouter.router);
@@ -203,9 +315,7 @@ async function initialize() {
     app.use('/api/stats', statsRouter.router);
     app.use('/api/titles', titlesRouter.router);
     app.use('/api/jobs', jobsRouter.router);
-    app.use('/api/provider', providerApiRouter.router); // Provider API routes for engine (must come before /api/iptv/providers)
-    app.use('/api/iptv/providers', providersRouter.router); // Must come before /api/iptv
-    app.use('/api/iptv', categoriesRouter.router);
+    app.use('/api/iptv/providers', providersRouter.router);
     app.use('/api/stream', streamRouter.router);
     app.use('/api/playlist', playlistRouter.router);
     app.use('/api/tmdb', tmdbRouter.router);
@@ -256,9 +366,10 @@ async function initialize() {
 async function shutdown() {
   logger.info('Shutting down gracefully...');
   
-  // Set stopping flag on database
-  if (database) {
-    database.setStopping(true);
+  // Stop job scheduler
+  if (jobScheduler) {
+    await jobScheduler.stop();
+    logger.info('Job scheduler stopped');
   }
   
   // Close HTTP server

@@ -1,5 +1,4 @@
 import BaseRouter from './BaseRouter.js';
-import { DatabaseCollections, toCollectionName } from '../config/collections.js';
 
 /**
  * Get the base URL from the request, respecting X-Forwarded-* headers
@@ -69,11 +68,11 @@ function buildServerInfo(req) {
 class XtreamRouter extends BaseRouter {
   /**
    * @param {import('../managers/xtream.js').XtreamManager} xtreamManager - Xtream manager instance
-   * @param {import('../services/database.js').DatabaseService} database - Database service instance
    * @param {import('../managers/stream.js').StreamManager} streamManager - Stream manager instance
+   * @param {import('../middleware/Middleware.js').default} middleware - Middleware instance
    */
-  constructor(xtreamManager, database, streamManager) {
-    super(database, 'XtreamRouter');
+  constructor(xtreamManager, streamManager, middleware) {
+    super(middleware, 'XtreamRouter');
     this._xtreamManager = xtreamManager;
     this._streamManager = streamManager;
     
@@ -105,35 +104,12 @@ class XtreamRouter extends BaseRouter {
      * Xtream Code API endpoint (mounted at /player_api.php)
      * Query parameters: username, password (API key), action
      */
-    this.router.get('/', async (req, res) => {
+    this.router.get('/', this.middleware.requireXtreamAuth, async (req, res) => {
       try {
         // Set UTF-8 charset header for all JSON responses
         res.setHeader('Content-Type', 'application/json; charset=UTF-8');
         
         const { username, password, action } = req.query;
-
-        // Validate required parameters
-        if (!username || !password) {
-          return res.status(401).json({ 
-            user_info: { 
-              auth: 0,
-              status: 'Blocked',
-              message: 'Username or password incorrect'
-            }
-          });
-        }
-
-        // Authenticate user (password is the API key)
-        const user = await this._authenticateUser(username, password);
-        if (!user) {
-          return res.status(401).json({ 
-            user_info: { 
-              auth: 0,
-              status: 'Blocked',
-              message: 'Username or password incorrect'
-            }
-          });
-        }
 
         // Get base URL for stream endpoints
         const baseUrl = getBaseUrl(req);
@@ -143,7 +119,7 @@ class XtreamRouter extends BaseRouter {
         
         if (handler) {
           try {
-            const response = await handler(req, user, baseUrl);
+            const response = await handler(req, baseUrl);
             return res.status(200).json(response);
           } catch (error) {
             // Handle specific errors from handlers
@@ -168,7 +144,7 @@ class XtreamRouter extends BaseRouter {
             exp_date: 'Unlimited',
             is_trial: 0,
             active_cons: 0,
-            created_at: user.createdAt || null,
+            created_at: req.user.createdAt || null,
             max_connections: 1,
             allowed_output_formats: ['m3u8', 'ts']
           },
@@ -185,15 +161,9 @@ class XtreamRouter extends BaseRouter {
      * Format: /{username}/{password}/movies-{title_id}.mp4 or /{username}/{password}/{title_id}.mp4 for movies
      * Format: /{username}/{password}/tvshows-{title_id}-{season}-{episode}.mp4 or /{username}/{password}/{title_id}-{season}-{episode}.mp4 for series
      */
-    this.router.get('/:username/:password/:streamId', async (req, res) => {
+    this.router.get('/:username/:password/:streamId', this.middleware.requireXtreamAuth, async (req, res) => {
       try {
-        const { username, password, streamId } = req.params;
-
-        // Authenticate user
-        const user = await this._authenticateUser(username, password);
-        if (!user) {
-          return this.returnErrorResponse(res, 401, 'Unauthorized');
-        }
+        const { streamId } = req.params;
 
         // Get handler based on mount path (req.baseUrl)
         const handler = this._streamTypeHandlers[req.baseUrl];
@@ -202,7 +172,7 @@ class XtreamRouter extends BaseRouter {
         }
 
         // Call the appropriate handler
-        return await handler(req, res, user, streamId);
+        return await handler(req, res, streamId);
       } catch (error) {
         return this.returnErrorResponse(res, 500, 'Failed to get stream', `Stream error: ${error.message}`);
       }
@@ -212,67 +182,62 @@ class XtreamRouter extends BaseRouter {
   /**
    * Handle get_vod_categories action
    * @private
-   * @param {Object} req - Express request object
-   * @param {Object} user - Authenticated user
+   * @param {Object} req - Express request object (contains req.user from middleware)
    * @param {string} baseUrl - Base URL
    * @returns {Promise<Array>} VOD categories
    */
-  async _handleGetVodCategories(req, user, baseUrl) {
-    return await this._xtreamManager.getVodCategories(user);
+  async _handleGetVodCategories(req, baseUrl) {
+    return await this._xtreamManager.getVodCategories(req.user);
   }
 
   /**
    * Handle get_vod_streams action
    * @private
-   * @param {Object} req - Express request object
-   * @param {Object} user - Authenticated user
+   * @param {Object} req - Express request object (contains req.user from middleware)
    * @param {string} baseUrl - Base URL
    * @returns {Promise<Array>} VOD streams
    */
-  async _handleGetVodStreams(req, user, baseUrl) {
+  async _handleGetVodStreams(req, baseUrl) {
     const categoryId = req.query.category_id ? parseInt(req.query.category_id, 10) : null;
-    return await this._xtreamManager.getVodStreams(user, baseUrl, categoryId);
+    return await this._xtreamManager.getVodStreams(req.user, baseUrl, categoryId);
   }
 
   /**
    * Handle get_series_categories action
    * @private
-   * @param {Object} req - Express request object
-   * @param {Object} user - Authenticated user
+   * @param {Object} req - Express request object (contains req.user from middleware)
    * @param {string} baseUrl - Base URL
    * @returns {Promise<Array>} Series categories
    */
-  async _handleGetSeriesCategories(req, user, baseUrl) {
-    return await this._xtreamManager.getSeriesCategories(user);
+  async _handleGetSeriesCategories(req, baseUrl) {
+    return await this._xtreamManager.getSeriesCategories(req.user);
   }
 
   /**
    * Handle get_series action
    * @private
-   * @param {Object} req - Express request object
-   * @param {Object} user - Authenticated user
+   * @param {Object} req - Express request object (contains req.user from middleware)
    * @param {string} baseUrl - Base URL
    * @returns {Promise<Array>} Series list
    */
-  async _handleGetSeries(req, user, baseUrl) {
+  async _handleGetSeries(req, baseUrl) {
     const categoryId = req.query.category_id ? parseInt(req.query.category_id, 10) : null;
-    return await this._xtreamManager.getSeries(user, baseUrl, categoryId);
+    return await this._xtreamManager.getSeries(req.user, baseUrl, categoryId);
   }
 
   /**
    * Handle get_vod_info action
    * @private
-   * @param {Object} req - Express request object
-   * @param {Object} user - Authenticated user
+   * @param {Object} req - Express request object (contains req.user from middleware)
    * @param {string} baseUrl - Base URL
    * @returns {Promise<Object>} VOD info or error response
    */
-  async _handleGetVodInfo(req, user, baseUrl) {
+  async _handleGetVodInfo(req, baseUrl) {
     const vodId = req.query.vod_id ? parseInt(req.query.vod_id, 10) : null;
     if (!vodId) {
       throw new Error('vod_id parameter required');
     }
-    const response = await this._xtreamManager.getVodInfo(user, baseUrl, vodId);
+    const response = await this._xtreamManager.getVodInfo(req.user, baseUrl, vodId);
     if (!response) {
       throw new Error('Movie not found');
     }
@@ -282,17 +247,16 @@ class XtreamRouter extends BaseRouter {
   /**
    * Handle get_series_info action
    * @private
-   * @param {Object} req - Express request object
-   * @param {Object} user - Authenticated user
+   * @param {Object} req - Express request object (contains req.user from middleware)
    * @param {string} baseUrl - Base URL
    * @returns {Promise<Object>} Series info or error response
    */
-  async _handleGetSeriesInfo(req, user, baseUrl) {
+  async _handleGetSeriesInfo(req, baseUrl) {
     const seriesId = req.query.series_id ? parseInt(req.query.series_id, 10) : null;
     if (!seriesId) {
       throw new Error('series_id parameter required');
     }
-    const response = await this._xtreamManager.getSeriesInfo(user, baseUrl, seriesId);
+    const response = await this._xtreamManager.getSeriesInfo(req.user, baseUrl, seriesId);
     if (!response) {
       throw new Error('Series not found');
     }
@@ -302,12 +266,11 @@ class XtreamRouter extends BaseRouter {
   /**
    * Handle get_short_epg action
    * @private
-   * @param {Object} req - Express request object
-   * @param {Object} user - Authenticated user
+   * @param {Object} req - Express request object (contains req.user from middleware)
    * @param {string} baseUrl - Base URL
    * @returns {Promise<Array>} Empty EPG array
    */
-  async _handleGetShortEpg(req, user, baseUrl) {
+  async _handleGetShortEpg(req, baseUrl) {
     // EPG not implemented, return empty array
     return [];
   }
@@ -315,12 +278,11 @@ class XtreamRouter extends BaseRouter {
   /**
    * Handle get_simple_data_table action
    * @private
-   * @param {Object} req - Express request object
-   * @param {Object} user - Authenticated user
+   * @param {Object} req - Express request object (contains req.user from middleware)
    * @param {string} baseUrl - Base URL
    * @returns {Promise<Object>} Empty object
    */
-  async _handleGetSimpleDataTable(req, user, baseUrl) {
+  async _handleGetSimpleDataTable(req, baseUrl) {
     // Not implemented, return empty object
     return {};
   }
@@ -328,13 +290,12 @@ class XtreamRouter extends BaseRouter {
   /**
    * Handle movie stream request
    * @private
-   * @param {Object} req - Express request object
+   * @param {Object} req - Express request object (contains req.user from middleware)
    * @param {Object} res - Express response object
-   * @param {Object} user - Authenticated user
    * @param {string} streamId - Stream ID
    * @returns {Promise<void>}
    */
-  async _handleMovieStream(req, res, user, streamId) {
+  async _handleMovieStream(req, res, streamId) {
     const { username } = req.params;
 
     // Parse stream ID to extract title ID
@@ -359,13 +320,12 @@ class XtreamRouter extends BaseRouter {
   /**
    * Handle series stream request
    * @private
-   * @param {Object} req - Express request object
+   * @param {Object} req - Express request object (contains req.user from middleware)
    * @param {Object} res - Express response object
-   * @param {Object} user - Authenticated user
    * @param {string} streamId - Stream ID
    * @returns {Promise<void>}
    */
-  async _handleSeriesStream(req, res, user, streamId) {
+  async _handleSeriesStream(req, res, streamId) {
     const { username } = req.params;
 
     // Parse stream ID to extract title ID, season, and episode
@@ -484,33 +444,6 @@ class XtreamRouter extends BaseRouter {
     };
   }
 
-  /**
-   * Authenticate user by username and API key
-   * @private
-   * @param {string} username - Username
-   * @param {string} apiKey - API key (passed as password parameter)
-   * @returns {Promise<Object|null>} User object or null if invalid
-   */
-  async _authenticateUser(username, apiKey) {
-    try {
-      const usersCollection = toCollectionName(DatabaseCollections.USERS);
-      const user = await this._database.getData(usersCollection, { 
-        username: username,
-        api_key: apiKey 
-      });
-
-      if (!user || user.status !== 'active') {
-        return null;
-      }
-
-      // Remove sensitive data
-      const { password_hash, _id, ...userPublic } = user;
-      return userPublic;
-    } catch (error) {
-      this.logger.error('Authentication error:', error);
-      return null;
-    }
-  }
 }
 
 export default XtreamRouter;

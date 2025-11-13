@@ -10,11 +10,11 @@ const START_TIME = Date.now() / 1000; // Unix timestamp in seconds
  */
 class HealthcheckRouter extends BaseRouter {
   /**
-   * @param {MongoDatabaseService} database - Database service instance
    * @param {SettingsManager} settingsManager - Settings manager instance
+   * @param {import('../middleware/Middleware.js').default} middleware - Middleware instance
    */
-  constructor(database, settingsManager) {
-    super(database, 'HealthcheckRouter');
+  constructor(settingsManager, middleware) {
+    super(middleware, 'HealthcheckRouter');
     this._settingsManager = settingsManager;
   }
 
@@ -32,9 +32,8 @@ class HealthcheckRouter extends BaseRouter {
         let dbStatus = false;
         let dbMessage = 'Not connected';
         try {
-          // Test MongoDB connection with a simple query
-          const collection = this._database.getCollection('settings');
-          await collection.findOne({});
+          // Test MongoDB connection using SettingsManager
+          await this._settingsManager.testConnection();
           dbStatus = true;
           dbMessage = 'Connected';
         } catch (error) {

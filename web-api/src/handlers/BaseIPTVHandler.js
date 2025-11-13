@@ -20,34 +20,53 @@
  * @property {Array} [episodes] - Array of episode data (for TV shows)
  */
 
-import { BaseProvider } from './BaseProvider.js';
+import { BaseHandler } from './BaseHandler.js';
 import { generateTitleKey, generateCategoryKey } from '../utils/titleUtils.js';
 
 /**
- * Base class for all IPTV providers (AGTV, Xtream)
- * Extends BaseProvider with IPTV-specific functionality
+ * Base class for all IPTV handlers (AGTV, Xtream)
+ * Extends BaseHandler with IPTV-specific functionality
  * @abstract
  */
-export class BaseIPTVProvider extends BaseProvider { 
+export class BaseIPTVHandler extends BaseHandler { 
   /**
    * @param {Object} providerData - Provider configuration data
-   * @param {import('../services/MongoDataService.js').MongoDataService} mongoData - MongoDB data service instance
+   * @param {import('../repositories/ProviderTitleRepository.js').ProviderTitleRepository} providerTitleRepo - Provider titles repository
+   * @param {import('../repositories/ProviderRepository.js').ProviderRepository} providerRepo - Provider repository
+   * @param {import('../managers/providers.js').ProvidersManager} providersManager - Providers manager for direct API calls
+   * @param {import('../managers/tmdb.js').TMDBManager} tmdbManager - TMDB manager for matching TMDB IDs (required)
+   * @param {import('../handlers/TMDBHandler.js').TMDBHandler} tmdbHandler - TMDB handler instance (required)
    * @param {number} [metadataBatchSize=100] - Batch size for processing metadata (default: 100)
-   * @param {import('../providers/TMDBProvider.js').TMDBProvider} tmdbProvider - TMDB provider instance for matching TMDB IDs (required)
    */
-  constructor(providerData, mongoData, metadataBatchSize = 100, tmdbProvider) {
+  constructor(providerData, providerTitleRepo, providerRepo, providersManager, tmdbManager, tmdbHandler, metadataBatchSize = 100) {
     super(providerData);
     
-    if (!mongoData) {
-      throw new Error('MongoDataService is required');
+    if (!providerTitleRepo) {
+      throw new Error('ProviderTitleRepository is required');
     }
-    this.mongoData = mongoData;
+    this.providerTitleRepo = providerTitleRepo;
     
-    // TMDB provider instance for matching TMDB IDs (required)
-    if (!tmdbProvider) {
-      throw new Error('TMDBProvider is required for BaseIPTVProvider');
+    if (!providerRepo) {
+      throw new Error('ProviderRepository is required');
     }
-    this.tmdbProvider = tmdbProvider;
+    this.providerRepo = providerRepo;
+    
+    if (!providersManager) {
+      throw new Error('ProvidersManager is required for BaseIPTVHandler');
+    }
+    this.providersManager = providersManager;
+    
+    // TMDB manager for matching TMDB IDs (required)
+    if (!tmdbManager) {
+      throw new Error('TMDBManager is required for BaseIPTVHandler');
+    }
+    this.tmdbManager = tmdbManager;
+    
+    // TMDB handler for matching TMDB IDs (required)
+    if (!tmdbHandler) {
+      throw new Error('TMDBHandler is required for BaseIPTVHandler');
+    }
+    this.tmdbHandler = tmdbHandler;
     
     // In-memory cache for titles and ignored titles
     // Loaded once at the start of job execution and kept in memory
@@ -96,7 +115,6 @@ export class BaseIPTVProvider extends BaseProvider {
    * Template method pattern - delegates to provider-specific methods
    * @param {string} type - Media type ('movies' or 'tvshows')
    * @returns {Promise<number>} Number of titles processed and saved
-   * @override
    */
   async fetchMetadata(type) {
     this.logger.info(`${type}: Starting fetchMetadata`);
@@ -328,10 +346,14 @@ export class BaseIPTVProvider extends BaseProvider {
       return false;
     }
 
-    // Match TMDB ID if needed
+    // Match TMDB ID if needed - use tmdbManager directly
     if (!titleData.tmdb_id) {
       try {
-        const tmdbId = await this.tmdbProvider.matchTMDBIdForTitle(titleData, type, this.getProviderType());
+        // Create a temporary handler-like object for matchTMDBIdForTitle
+        // The tmdbManager needs to be called via a handler that has matchTMDBIdForTitle method
+        // For now, we'll need to pass the handler instance to tmdbManager or create a wrapper
+        // This will be handled in TMDBHandler
+        const tmdbId = await this.tmdbHandler.matchTMDBIdForTitle(titleData, type, this.getProviderType());
         
         if (tmdbId) {
           titleData.tmdb_id = tmdbId;
@@ -360,6 +382,7 @@ export class BaseIPTVProvider extends BaseProvider {
 
     return true;
   }
+
 
   /**
    * Process a single title (provider-specific)
@@ -445,11 +468,12 @@ export class BaseIPTVProvider extends BaseProvider {
     };
 
     // Persist to MongoDB
-    await this.mongoData.db.collection('iptv_providers').updateOne(
-      { id: this.providerId },
-      {
-        $set: {
-          enabled_categories: this.providerData.enabled_categories,
+      await this.providerRepo.updateOne(
+        this.providerRepo.collectionName,
+        { id: this.providerId },
+        {
+          $set: {
+            enabled_categories: this.providerData.enabled_categories,
           lastUpdated: new Date()
         }
       }
@@ -476,9 +500,27 @@ export class BaseIPTVProvider extends BaseProvider {
         queryOptions.ignored = false;
       }
       
-      const titles = await this.mongoData.getProviderTitles(this.providerId, queryOptions);
+      // Build query from options
+      const query = { provider_id: this.providerId };
+      if (queryOptions.since) {
+        query.lastUpdated = { $gt: queryOptions.since };
+      }
+      if (queryOptions.type) {
+        query.type = queryOptions.type;
+      }
+      if (queryOptions.ignored !== undefined) {
+        query.ignored = queryOptions.ignored;
+      }
+      
+      const titles = await this.providerTitleRepo.findByQuery(query);
       
       this._titlesCache = titles;
+      
+      // Also load ignored titles into cache
+      if (includeIgnored) {
+        await this._loadIgnoredFromMongoDB();
+      }
+      
       return titles;
     } catch (error) {
       this.logger.error(`Error loading provider titles from MongoDB: ${error.message}`);
@@ -558,7 +600,10 @@ export class BaseIPTVProvider extends BaseProvider {
 
     try {
       // Save to MongoDB using bulk operations
-      const result = await this.mongoData.saveProviderTitles(this.providerId, processedTitles);
+      const result = await this.providerTitleRepo.bulkSave(processedTitles, {
+        providerId: this.providerId,
+        addTimestamps: true
+      });
       
       // Update in-memory cache - merge with existing cache
       if (this._titlesCache === null) {
@@ -604,7 +649,8 @@ export class BaseIPTVProvider extends BaseProvider {
    */
   async _loadIgnoredFromMongoDB() {
     try {
-      const ignoredTitles = await this.mongoData.getProviderTitles(this.providerId, {
+      const ignoredTitles = await this.providerTitleRepo.findByQuery({
+        provider_id: this.providerId,
         ignored: true
       });
       
@@ -652,7 +698,6 @@ export class BaseIPTVProvider extends BaseProvider {
    */
   async saveAllIgnoredTitles(allIgnored) {
     try {
-      const collection = this.mongoData.db.collection('provider_titles');
       const now = new Date();
       
       // Group titles by reason for bulk updates
@@ -693,7 +738,7 @@ export class BaseIPTVProvider extends BaseProvider {
         // Process all operations in batches of 1000
         for (let i = 0; i < operations.length; i += 1000) {
           const batch = operations.slice(i, i + 1000);
-          await collection.bulkWrite(batch, { ordered: false });
+          await this.providerTitleRepo.bulkWrite(this.providerTitleRepo.collectionName, batch, { ordered: false });
         }
       }
       
@@ -741,7 +786,6 @@ export class BaseIPTVProvider extends BaseProvider {
     this.logger.debug('Unloaded titles from memory cache');
   }
 
-
   /**
    * Update provider configuration
    * @param {Object} providerConfig - Provider configuration data
@@ -778,10 +822,11 @@ export class BaseIPTVProvider extends BaseProvider {
    * @returns {Promise<number>} Number of titles updated
    */
   async resetTitlesLastUpdated() {
-    if (!this.mongoData) {
-      throw new Error('MongoDataService is required');
-    }
-    return await this.mongoData.resetProviderTitlesLastUpdated(this.providerId);
+    const result = await this.providerTitleRepo.updateManyByQuery(
+      { provider_id: this.providerId },
+      { $set: { lastUpdated: new Date() } }
+    );
+    return result.modifiedCount || 0;
   }
 }
 

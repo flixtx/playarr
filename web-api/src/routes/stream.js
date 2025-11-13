@@ -6,10 +6,10 @@ import BaseRouter from './BaseRouter.js';
 class StreamRouter extends BaseRouter {
   /**
    * @param {StreamManager} streamManager - Stream manager instance
-   * @param {DatabaseService} database - Database service instance
+   * @param {import('../middleware/Middleware.js').default} middleware - Middleware instance
    */
-  constructor(streamManager, database) {
-    super(database, 'StreamRouter');
+  constructor(streamManager, middleware) {
+    super(middleware, 'StreamRouter');
     this._streamManager = streamManager;
   }
 
@@ -21,7 +21,7 @@ class StreamRouter extends BaseRouter {
      * GET /api/stream/movies/:title_id
      * Get movie stream redirect (requires API key)
      */
-    this.router.get('/movies/:title_id', this._requireApiKey, async (req, res) => {
+    this.router.get('/movies/:title_id', this.middleware.requireApiKey, async (req, res) => {
       try {
         const { title_id } = req.params;
         const stream = await this._streamManager.getBestSource(title_id, 'movies');
@@ -40,7 +40,7 @@ class StreamRouter extends BaseRouter {
      * GET /api/stream/tvshows/:title_id/:season/:episode
      * Get TV show stream redirect (requires API key)
      */
-    this.router.get('/tvshows/:title_id/:season/:episode', this._requireApiKey, async (req, res) => {
+    this.router.get('/tvshows/:title_id/:season/:episode', this.middleware.requireApiKey, async (req, res) => {
       try {
         const { title_id, season, episode } = req.params;
         const stream = await this._streamManager.getBestSource(
