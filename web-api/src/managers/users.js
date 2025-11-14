@@ -23,7 +23,7 @@ class UserManager extends BaseManager {
    */
   async initialize() {
     try {
-      this.logger.info('Initializing user manager...');
+      this.logger.debug('Initializing user manager...');
 
       // Ensure default admin user exists
       await this._ensureDefaultAdminUser();

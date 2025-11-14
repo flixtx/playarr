@@ -22,12 +22,22 @@ class StreamManager extends BaseManager {
   /**
    * @param {import('../repositories/TitleStreamRepository.js').TitleStreamRepository} titleStreamRepo - Title stream repository
    * @param {import('../repositories/ProviderRepository.js').ProviderRepository} providerRepo - Provider repository
+   * @param {import('./providers.js').ProvidersManager} [providersManager] - Providers manager instance (optional, can be set later via setter)
    */
-  constructor(titleStreamRepo, providerRepo) {
+  constructor(titleStreamRepo, providerRepo, providersManager = null) {
     super('StreamManager');
     this._titleStreamRepo = titleStreamRepo;
     this._providerRepo = providerRepo;
+    this._providersManager = providersManager;
     this._timeout = 7500; // 7.5 seconds timeout for URL checks
+  }
+
+  /**
+   * Set ProvidersManager instance (for lazy injection to resolve circular dependency)
+   * @param {import('./providers.js').ProvidersManager} providersManager - Providers manager instance
+   */
+  setProvidersManager(providersManager) {
+    this._providersManager = providersManager;
   }
 
   /**
@@ -129,8 +139,17 @@ class StreamManager extends BaseManager {
 
       // Get providers data to access streams_urls for base URL concatenation
       // Filter to only enabled providers
-      const providersCollection = toCollectionName(DatabaseCollections.IPTV_PROVIDERS);
-      const allProviders = await this._providerRepo.findByQuery({}) || [];
+      let allProviders;
+      
+      // Use ProvidersManager if available (uses cache), otherwise fallback to direct repo access
+      if (this._providersManager) {
+        const providersResult = await this._providersManager.getProviders();
+        allProviders = providersResult.response?.providers || [];
+      } else {
+        // Fallback to direct repository access (for initialization before ProvidersManager is created)
+        allProviders = await this._providerRepo.findByQuery({}) || [];
+      }
+      
       const providers = allProviders.filter(p => p.enabled !== false);
       const providersMap = new Map(providers.map(p => [p.id, p]));
 

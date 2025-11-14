@@ -104,7 +104,7 @@ app.use((err, req, res, next) => {
 // Initialize application
 async function initialize() {
   try {
-    logger.info('Initializing application...');
+    logger.debug('Initializing application...');
 
     // Step 1: Initialize services (bottom-up)
     // 1. Initialize MongoDB connection
@@ -112,7 +112,7 @@ async function initialize() {
     const dbName = process.env.MONGODB_DB_NAME || 'playarr';
     
     try {
-      logger.info(`Connecting to MongoDB: ${mongoUri}`);
+      logger.debug(`Connecting to MongoDB: ${mongoUri}`);
       mongoClient = new MongoClient(mongoUri, {
         serverSelectionTimeoutMS: 5000,
       });
@@ -136,7 +136,7 @@ async function initialize() {
     logger.info('All repositories created');
 
     // 2.1. Initialize database indexes for all repositories
-    logger.info('Initializing database indexes...');
+    logger.debug('Initializing database indexes...');
     try {
       await Promise.all([
         titleRepo.initializeIndexes(),
@@ -147,7 +147,6 @@ async function initialize() {
         jobHistoryRepo.initializeIndexes(),
         settingsRepo.initializeIndexes(),
         // statsRepo doesn't need indexes (single document collection)
-        // cachePolicyRepo is skipped (will be removed)
       ]);
       logger.info('All database indexes initialized');
     } catch (error) {
@@ -227,7 +226,12 @@ async function initialize() {
       providerRepo,
       triggerJob
     );
+    
+    // Resolve circular dependency: inject ProvidersManager into TitlesManager and StreamManager
+    titlesManager.setProvidersManager(providersManager);
+    
     const streamManager = new StreamManager(titleStreamRepo, providerRepo);
+    streamManager.setProvidersManager(providersManager);
     const playlistManager = new PlaylistManager(titleRepo);
     const tmdbManager = new TMDBManager(settingsManager, tmdbProvider);
     const xtreamManager = new XtreamManager(titlesManager);
@@ -260,15 +264,13 @@ async function initialize() {
     // Initialize EngineScheduler with job instances
     jobScheduler = new EngineScheduler(jobInstances, jobHistoryRepo);
     await jobScheduler.initialize();
-    logger.info('Job scheduler initialized and started');
     
     // Initialize JobsManager
     jobsManager = new JobsManager(jobsConfig, jobScheduler, jobHistoryRepo);
 
     // Initialize user manager (creates default admin user)
     await userManager.initialize();
-    logger.info('User manager initialized');
-
+    
     // Step 3: Initialize middleware (after UserManager is initialized)
     const middleware = new Middleware(userManager);
     logger.info('Middleware initialized');

@@ -107,8 +107,11 @@ export class BaseJob {
       // Create TMDB handler first (needed by IPTV handlers)
       this.tmdbHandler = this._createTMDBHandler();
       
-      // Load all provider configurations from MongoDB
-      const providers = await this.providerRepo.findByQuery({ deleted: { $ne: true } }, { sort: { priority: 1 } });
+      // Load all provider configurations using ProvidersManager (uses cache)
+      const providersResult = await this.providersManager.getProviders();
+      const providers = (providersResult.response?.providers || [])
+        .filter(p => !p.deleted)
+        .sort((a, b) => (a.priority || 999) - (b.priority || 999));
       
       if (providers.length === 0) {
         this.logger.warn('No providers found in database');
@@ -181,8 +184,11 @@ export class BaseJob {
    */
   async getProviderConfig(providerId) {
     try {
-      const providerConfig = await this.providerRepo.findOneByQuery({ id: providerId, deleted: { $ne: true } });
-      return providerConfig;
+      const providerResult = await this.providersManager.getProvider(providerId);
+      if (providerResult.statusCode === 200 && !providerResult.response.deleted) {
+        return providerResult.response;
+      }
+      return null;
     } catch (error) {
       this.logger.error(`Error getting provider config for ${providerId}: ${error.message}`);
       return null;

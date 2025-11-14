@@ -130,7 +130,7 @@ export class TitleRepository extends BaseRepository {
         logger.debug('Text index creation skipped (may already exist or conflict)');
       }
 
-      logger.info('TitleRepository indexes initialized');
+      logger.debug('TitleRepository indexes initialized');
     } catch (error) {
       logger.error(`Error initializing indexes: ${error.message}`);
       throw error;

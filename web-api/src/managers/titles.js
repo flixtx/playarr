@@ -40,18 +40,28 @@ class TitlesManager extends BaseManager {
    * @param {import('./users.js').UserManager} userManager - User manager instance (for watchlist operations)
    * @param {import('../repositories/TitleRepository.js').TitleRepository} titleRepo - Title repository
    * @param {import('../repositories/ProviderRepository.js').ProviderRepository} providerRepo - Provider repository
+   * @param {import('./providers.js').ProvidersManager} [providersManager] - Providers manager instance (optional, can be set later via setter)
    */
-  constructor(userManager, titleRepo, providerRepo) {
+  constructor(userManager, titleRepo, providerRepo, providersManager = null) {
     super('TitlesManager');
     this._userManager = userManager;
     this._titleRepo = titleRepo;
     this._providerRepo = providerRepo;
+    this._providersManager = providersManager;
     this._titlesCollection = toCollectionName(DatabaseCollections.TITLES);
     this._titlesStreamsCollection = toCollectionName(DatabaseCollections.TITLES_STREAMS);
     this._settingsCollection = toCollectionName(DatabaseCollections.SETTINGS);
     this._providersCollection = toCollectionName(DatabaseCollections.IPTV_PROVIDERS);
     this._tmdbPosterPath = 'https://image.tmdb.org/t/p/w300';
     this._tmdbBackdropPath = 'https://image.tmdb.org/t/p/w300';
+  }
+
+  /**
+   * Set ProvidersManager instance (for lazy injection to resolve circular dependency)
+   * @param {import('./providers.js').ProvidersManager} providersManager - Providers manager instance
+   */
+  setProvidersManager(providersManager) {
+    this._providersManager = providersManager;
   }
 
   /**
@@ -120,8 +130,16 @@ class TitlesManager extends BaseManager {
    */
   async _getEnabledProviders() {
     try {
-      // Get all providers from database (cached by database service)
-      const providers = await this._providerRepo.findByQuery({});
+      let providers;
+      
+      // Use ProvidersManager if available (uses cache), otherwise fallback to direct repo access
+      if (this._providersManager) {
+        const providersResult = await this._providersManager.getProviders();
+        providers = providersResult.response?.providers || [];
+      } else {
+        // Fallback to direct repository access (for initialization before ProvidersManager is created)
+        providers = await this._providerRepo.findByQuery({});
+      }
       
       if (!providers || providers.length === 0) {
         return new Set();

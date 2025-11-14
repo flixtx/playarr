@@ -804,7 +804,7 @@ export class BaseRepository {
         }
       }
 
-      logger.info(`${this.collectionName} indexes initialized`);
+      logger.debug(`${this.collectionName} indexes initialized`);
     } catch (error) {
       logger.error(`Error initializing indexes for ${this.collectionName}: ${error.message}`);
       throw error;

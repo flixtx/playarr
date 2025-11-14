@@ -467,17 +467,15 @@ export class BaseIPTVHandler extends BaseHandler {
       tvshows: enabledCategories.tvshows || []
     };
 
-    // Persist to MongoDB
-      await this.providerRepo.updateOne(
-        this.providerRepo.collectionName,
-        { id: this.providerId },
-        {
-          $set: {
-            enabled_categories: this.providerData.enabled_categories,
-          lastUpdated: new Date()
-        }
-      }
+    // Use ProvidersManager to persist (handles cache invalidation)
+    const result = await this.providersManager.updateEnabledCategories(
+      this.providerId,
+      enabledCategories
     );
+
+    if (result.statusCode !== 200) {
+      throw new Error(`Failed to update enabled categories: ${result.response?.error || 'Unknown error'}`);
+    }
 
     this.logger.info(`Updated enabled categories for provider ${this.providerId}`);
   }
