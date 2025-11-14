@@ -323,6 +323,39 @@ async function initialize() {
     app.use('/movie', xtreamRouter.router);
     app.use('/series', xtreamRouter.router);
 
+    // Catch-all middleware for unmanaged API endpoints (only when setting is enabled)
+    app.use(async (req, res, next) => {
+      // Only check API/Xtream routes, skip static files and React routes
+      if (req.path.startsWith('/api') || 
+          req.path.startsWith('/player_api.php') ||
+          req.path.startsWith('/movie') ||
+          req.path.startsWith('/series')) {
+        
+        try {
+          const logUnmanagedResult = await settingsManager.getSetting('log_unmanaged_endpoints');
+          const isEnabled = logUnmanagedResult.response?.value === true;
+          
+          if (isEnabled) {
+            const unmanagedLogger = createLogger('UnmanagedEndpointLogger');
+            unmanagedLogger.info('Unmanaged endpoint called', {
+              method: req.method,
+              url: req.url,
+              path: req.path,
+              query: req.query,
+              body: req.body,
+              headers: req.headers
+            });
+          }
+        } catch (error) {
+          // Don't break the request if setting check fails
+          logger.error('Error checking log_unmanaged_endpoints setting:', error);
+        }
+      }
+      
+      // Continue to next middleware
+      next();
+    });
+
     // Static file serving for React app
     // Serve static files from React build directory
     const staticPath = path.join(__dirname, '../../web-ui/build');

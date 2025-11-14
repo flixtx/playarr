@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Box, TextField, Button, CircularProgress, InputAdornment, IconButton, Tooltip } from '@mui/material';
+import { Box, TextField, Button, CircularProgress, InputAdornment, IconButton, Tooltip, FormControlLabel, Checkbox } from '@mui/material';
 import SaveIcon from '@mui/icons-material/Save';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
@@ -11,13 +11,22 @@ const SettingsGeneral = () => {
     const [isSaving, setIsSaving] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [showApiKey, setShowApiKey] = useState(false);
+    
+    // Add state for log unmanaged endpoints
+    const [logUnmanagedEndpoints, setLogUnmanagedEndpoints] = useState(false);
+    const [isSavingLogSetting, setIsSavingLogSetting] = useState(false);
 
-    // Fetch TMDB API key from backend on mount
+    // Fetch all settings on mount
     useEffect(() => {
         const fetchSettings = async () => {
             try {
-                const response = await axiosInstance.get(API_ENDPOINTS.settings.tmdbToken);
-                setTmdbApiKey(response.data.value || '');
+                // Fetch TMDB API key
+                const tmdbResponse = await axiosInstance.get(API_ENDPOINTS.settings.tmdbToken);
+                setTmdbApiKey(tmdbResponse.data.value || '');
+                
+                // Fetch log unmanaged endpoints setting
+                const logResponse = await axiosInstance.get('/api/settings/log_unmanaged_endpoints');
+                setLogUnmanagedEndpoints(logResponse.data.value === true);
             } catch (error) {
                 // handle error if needed
             } finally {
@@ -35,6 +44,19 @@ const SettingsGeneral = () => {
             // handle error if needed
         } finally {
             setIsSaving(false);
+        }
+    };
+
+    const handleSaveLogSetting = async () => {
+        setIsSavingLogSetting(true);
+        try {
+            await axiosInstance.post('/api/settings/log_unmanaged_endpoints', { 
+                value: logUnmanagedEndpoints 
+            });
+        } catch (error) {
+            // handle error if needed
+        } finally {
+            setIsSavingLogSetting(false);
         }
     };
 
@@ -81,6 +103,27 @@ const SettingsGeneral = () => {
                 >
                     {isSaving ? <CircularProgress size={24} /> : <SaveIcon />}
                 </Button>
+            </Box>
+            
+            {/* Add checkbox for log unmanaged endpoints */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                <FormControlLabel
+                    control={
+                        <Checkbox
+                            checked={logUnmanagedEndpoints}
+                            onChange={(e) => {
+                                setLogUnmanagedEndpoints(e.target.checked);
+                                // Auto-save on change
+                                setTimeout(() => {
+                                    handleSaveLogSetting();
+                                }, 0);
+                            }}
+                            disabled={isSavingLogSetting}
+                        />
+                    }
+                    label="Log unmanaged endpoints"
+                />
+                {isSavingLogSetting && <CircularProgress size={20} />}
             </Box>
         </Box>
     );

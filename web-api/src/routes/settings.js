@@ -1,10 +1,8 @@
 import BaseRouter from './BaseRouter.js';
 
-// TMDB token key constant matching Python
-const TMDB_TOKEN_KEY = 'tmdb_token';
-
 /**
  * Settings router for handling settings endpoints
+ * Uses parameterized routes to support any setting key dynamically
  */
 class SettingsRouter extends BaseRouter {
   /**
@@ -21,47 +19,50 @@ class SettingsRouter extends BaseRouter {
    */
   initialize() {
     /**
-     * GET /api/settings/tmdb_token
-     * Get TMDB token setting
+     * GET /api/settings/:key
+     * Get any setting by key
      */
-    this.router.get('/tmdb_token', this.middleware.requireAuth, async (req, res) => {
+    this.router.get('/:key', this.middleware.requireAuth, async (req, res) => {
       try {
-        const result = await this._settingsManager.getSetting(TMDB_TOKEN_KEY);
+        const { key } = req.params;
+        const result = await this._settingsManager.getSetting(key);
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        return this.returnErrorResponse(res, 500, 'Failed to get TMDB token', `Get TMDB token error: ${error.message}`);
+        return this.returnErrorResponse(res, 500, 'Failed to get setting', `Get setting error: ${error.message}`);
       }
     });
 
     /**
-     * POST /api/settings/tmdb_token
-     * Set TMDB token setting
+     * POST /api/settings/:key
+     * Set any setting by key
      */
-    this.router.post('/tmdb_token', this.middleware.requireAuth, async (req, res) => {
+    this.router.post('/:key', this.middleware.requireAuth, async (req, res) => {
       try {
+        const { key } = req.params;
         const { value } = req.body;
 
         if (value === undefined) {
           return this.returnErrorResponse(res, 400, 'value is required');
         }
 
-        const result = await this._settingsManager.setSetting(TMDB_TOKEN_KEY, value);
+        const result = await this._settingsManager.setSetting(key, value);
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        return this.returnErrorResponse(res, 500, 'Failed to set TMDB token', `Set TMDB token error: ${error.message}`);
+        return this.returnErrorResponse(res, 500, 'Failed to set setting', `Set setting error: ${error.message}`);
       }
     });
 
     /**
-     * DELETE /api/settings/tmdb_token
-     * Delete TMDB token setting
+     * DELETE /api/settings/:key
+     * Delete any setting by key
      */
-    this.router.delete('/tmdb_token', this.middleware.requireAuth, async (req, res) => {
+    this.router.delete('/:key', this.middleware.requireAuth, async (req, res) => {
       try {
-        const result = await this._settingsManager.deleteSetting(TMDB_TOKEN_KEY);
+        const { key } = req.params;
+        const result = await this._settingsManager.deleteSetting(key);
         return res.status(result.statusCode).json(result.response);
       } catch (error) {
-        return this.returnErrorResponse(res, 500, 'Failed to delete TMDB token', `Delete TMDB token error: ${error.message}`);
+        return this.returnErrorResponse(res, 500, 'Failed to delete setting', `Delete setting error: ${error.message}`);
       }
     });
   }
