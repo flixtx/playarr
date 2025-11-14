@@ -76,29 +76,27 @@ export class JobHistoryRepository extends BaseRepository {
   }
 
   /**
-   * Initialize database indexes for job_history collection
-   * Creates all required indexes if they don't exist
-   * @returns {Promise<void>}
+   * Get index definitions for job_history collection
+   * @returns {Array<Object>} Array of index definitions
    */
-  async initializeIndexes() {
-    try {
-      // CRITICAL: Primary lookup
-      await this.createIndexIfNotExists({ job_name: 1 });
-      logger.debug('Created index: job_name');
-
-      // HIGH: Provider-specific jobs
-      await this.createIndexIfNotExists({ job_name: 1, provider_id: 1 });
-      logger.debug('Created index: job_name + provider_id');
-
-      // HIGH: Status queries (startup reset)
-      await this.createIndexIfNotExists({ status: 1 });
-      logger.debug('Created index: status');
-
-      logger.info('JobHistoryRepository indexes initialized');
-    } catch (error) {
-      logger.error(`Error initializing indexes: ${error.message}`);
-      throw error;
-    }
+  getIndexDefinitions() {
+    return [
+      {
+        key: { job_name: 1 },
+        options: {},
+        description: 'Primary lookup'
+      },
+      {
+        key: { job_name: 1, provider_id: 1 },
+        options: {},
+        description: 'Provider-specific jobs'
+      },
+      {
+        key: { status: 1 },
+        options: {},
+        description: 'Status queries (startup reset)'
+      }
+    ];
   }
 
   /**

@@ -99,37 +99,38 @@ export class ProviderTitleRepository extends BaseRepository {
   }
 
   /**
-   * Initialize database indexes for provider_titles collection
-   * Creates all required indexes if they don't exist
-   * @returns {Promise<void>}
+   * Get index definitions for provider_titles collection
+   * @returns {Array<Object>} Array of index definitions
    */
-  async initializeIndexes() {
-    try {
-      // CRITICAL: Primary lookup (unique compound key)
-      await this.createIndexIfNotExists({ provider_id: 1, title_key: 1 }, { unique: true });
-      logger.debug('Created index: provider_id + title_key (unique)');
-
-      // CRITICAL: Most common query pattern
-      await this.createIndexIfNotExists({ provider_id: 1, type: 1 });
-      logger.debug('Created index: provider_id + type');
-
-      // HIGH: Ignored titles filtering
-      await this.createIndexIfNotExists({ provider_id: 1, ignored: 1 });
-      logger.debug('Created index: provider_id + ignored');
-
-      // HIGH: Incremental sync queries
-      await this.createIndexIfNotExists({ provider_id: 1, lastUpdated: 1 });
-      logger.debug('Created index: provider_id + lastUpdated');
-
-      // MEDIUM: Find all providers for a title
-      await this.createIndexIfNotExists({ title_key: 1 });
-      logger.debug('Created index: title_key');
-
-      logger.info('ProviderTitleRepository indexes initialized');
-    } catch (error) {
-      logger.error(`Error initializing indexes: ${error.message}`);
-      throw error;
-    }
+  getIndexDefinitions() {
+    return [
+      {
+        key: { provider_id: 1, title_key: 1 },
+        options: { unique: true },
+        duplicateKey: { provider_id: 1, title_key: 1 },
+        description: 'Primary lookup (unique compound key)'
+      },
+      {
+        key: { provider_id: 1, type: 1 },
+        options: {},
+        description: 'Most common query pattern'
+      },
+      {
+        key: { provider_id: 1, ignored: 1 },
+        options: {},
+        description: 'Ignored titles filtering'
+      },
+      {
+        key: { provider_id: 1, lastUpdated: 1 },
+        options: {},
+        description: 'Incremental sync queries'
+      },
+      {
+        key: { title_key: 1 },
+        options: {},
+        description: 'Find all providers for a title'
+      }
+    ];
   }
 
   /**

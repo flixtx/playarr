@@ -84,40 +84,38 @@ export class TitleStreamRepository extends BaseRepository {
   }
 
   /**
-   * Initialize database indexes for title_streams collection
-   * Creates all required indexes if they don't exist
-   * @returns {Promise<void>}
+   * Get index definitions for title_streams collection
+   * @returns {Array<Object>} Array of index definitions
    */
-  async initializeIndexes() {
-    try {
-      // CRITICAL: Primary lookup (unique compound key)
-      await this.createIndexIfNotExists(
-        { title_key: 1, stream_id: 1, provider_id: 1 },
-        { unique: true }
-      );
-      logger.debug('Created index: title_key + stream_id + provider_id (unique)');
-
-      // CRITICAL: Most common query (get streams for title)
-      await this.createIndexIfNotExists({ title_key: 1, stream_id: 1 });
-      logger.debug('Created index: title_key + stream_id');
-
-      // HIGH: Get all streams for a title
-      await this.createIndexIfNotExists({ title_key: 1 });
-      logger.debug('Created index: title_key');
-
-      // HIGH: Provider-based queries
-      await this.createIndexIfNotExists({ provider_id: 1 });
-      logger.debug('Created index: provider_id');
-
-      // MEDIUM: Provider + title combination
-      await this.createIndexIfNotExists({ provider_id: 1, title_key: 1 });
-      logger.debug('Created index: provider_id + title_key');
-
-      logger.info('TitleStreamRepository indexes initialized');
-    } catch (error) {
-      logger.error(`Error initializing indexes: ${error.message}`);
-      throw error;
-    }
+  getIndexDefinitions() {
+    return [
+      {
+        key: { title_key: 1, stream_id: 1, provider_id: 1 },
+        options: { unique: true },
+        duplicateKey: { title_key: 1, stream_id: 1, provider_id: 1 },
+        description: 'Primary lookup (unique compound key)'
+      },
+      {
+        key: { title_key: 1, stream_id: 1 },
+        options: {},
+        description: 'Most common query (get streams for title)'
+      },
+      {
+        key: { title_key: 1 },
+        options: {},
+        description: 'Get all streams for a title'
+      },
+      {
+        key: { provider_id: 1 },
+        options: {},
+        description: 'Provider-based queries'
+      },
+      {
+        key: { provider_id: 1, title_key: 1 },
+        options: {},
+        description: 'Provider + title combination'
+      }
+    ];
   }
 
   /**

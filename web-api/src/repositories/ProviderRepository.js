@@ -20,25 +20,23 @@ export class ProviderRepository extends BaseRepository {
   }
 
   /**
-   * Initialize database indexes for iptv_providers collection
-   * Creates all required indexes if they don't exist
-   * @returns {Promise<void>}
+   * Get index definitions for iptv_providers collection
+   * @returns {Array<Object>} Array of index definitions
    */
-  async initializeIndexes() {
-    try {
-      // CRITICAL: Primary lookup (unique)
-      await this.createIndexIfNotExists({ id: 1 }, { unique: true });
-      logger.debug('Created index: id (unique)');
-
-      // HIGH: Active providers with priority sort
-      await this.createIndexIfNotExists({ deleted: 1, priority: 1 });
-      logger.debug('Created index: deleted + priority');
-
-      logger.info('ProviderRepository indexes initialized');
-    } catch (error) {
-      logger.error(`Error initializing indexes: ${error.message}`);
-      throw error;
-    }
+  getIndexDefinitions() {
+    return [
+      {
+        key: { id: 1 },
+        options: { unique: true },
+        duplicateKey: { id: 1 },
+        description: 'Primary lookup (unique)'
+      },
+      {
+        key: { deleted: 1, priority: 1 },
+        options: {},
+        description: 'Active providers with priority sort'
+      }
+    ];
   }
   
   // No wrapper methods needed - use inherited methods directly:

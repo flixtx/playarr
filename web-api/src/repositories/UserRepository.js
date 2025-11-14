@@ -20,25 +20,24 @@ export class UserRepository extends BaseRepository {
   }
 
   /**
-   * Initialize database indexes for users collection
-   * Creates all required indexes if they don't exist
-   * @returns {Promise<void>}
+   * Get index definitions for users collection
+   * @returns {Array<Object>} Array of index definitions
    */
-  async initializeIndexes() {
-    try {
-      // CRITICAL: Authentication (unique)
-      await this.createIndexIfNotExists({ username: 1 }, { unique: true });
-      logger.debug('Created index: username (unique)');
-
-      // HIGH: API key authentication
-      await this.createIndexIfNotExists({ api_key: 1 }, { unique: true, sparse: true });
-      logger.debug('Created index: api_key (unique, sparse)');
-
-      logger.info('UserRepository indexes initialized');
-    } catch (error) {
-      logger.error(`Error initializing indexes: ${error.message}`);
-      throw error;
-    }
+  getIndexDefinitions() {
+    return [
+      {
+        key: { username: 1 },
+        options: { unique: true },
+        duplicateKey: { username: 1 },
+        description: 'Authentication (unique)'
+      },
+      {
+        key: { api_key: 1 },
+        options: { unique: true, sparse: true },
+        duplicateKey: { api_key: 1 },
+        description: 'API key authentication (unique, sparse)'
+      }
+    ];
   }
   
   // No wrapper methods needed - use inherited methods directly:

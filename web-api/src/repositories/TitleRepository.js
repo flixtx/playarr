@@ -75,25 +75,47 @@ export class TitleRepository extends BaseRepository {
   }
 
   /**
+   * Get index definitions for titles collection
+   * @returns {Array<Object>} Array of index definitions
+   */
+  getIndexDefinitions() {
+    return [
+      {
+        key: { title_key: 1 },
+        options: { unique: true },
+        duplicateKey: { title_key: 1 },
+        description: 'Primary lookup (unique)'
+      },
+      {
+        key: { type: 1, title: 1 },
+        options: {},
+        description: 'Most common query pattern (type filter + alphabetical sort)'
+      },
+      {
+        key: { type: 1, release_date: 1 },
+        options: {},
+        description: 'Date range queries with type'
+      },
+      {
+        key: { release_date: 1 },
+        options: {},
+        description: 'Release date only'
+      }
+    ];
+  }
+
+  /**
    * Initialize database indexes for titles collection
    * Creates all required indexes if they don't exist
+   * Also handles text index separately (special case)
    * @returns {Promise<void>}
    */
   async initializeIndexes() {
     try {
-      // CRITICAL: Primary lookup (unique)
-      await this.createIndexIfNotExists({ title_key: 1 }, { unique: true });
-      logger.debug('Created index: title_key (unique)');
+      // Use base implementation for standard indexes
+      await super.initializeIndexes();
 
-      // CRITICAL: Most common query pattern (type filter + alphabetical sort)
-      await this.createIndexIfNotExists({ type: 1, title: 1 });
-      logger.debug('Created index: type + title');
-
-      // HIGH: Date range queries with type
-      await this.createIndexIfNotExists({ type: 1, release_date: 1 });
-      logger.debug('Created index: type + release_date');
-
-      // HIGH: Text search index for full-text search
+      // Handle text index separately (special case)
       try {
         const collection = this.db.collection(this.collectionName);
         const indexes = await collection.indexes();
@@ -107,10 +129,6 @@ export class TitleRepository extends BaseRepository {
         // This is okay, we'll use regex search instead
         logger.debug('Text index creation skipped (may already exist or conflict)');
       }
-
-      // MEDIUM: Release date only
-      await this.createIndexIfNotExists({ release_date: 1 });
-      logger.debug('Created index: release_date');
 
       logger.info('TitleRepository indexes initialized');
     } catch (error) {

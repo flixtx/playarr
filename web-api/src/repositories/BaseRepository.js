@@ -687,5 +687,128 @@ export class BaseRepository {
   async deleteManyByQuery(filter, options = {}) {
     return await this.deleteMany(filter, options);
   }
+
+  /**
+   * Get index definitions for this repository
+   * Override this method in child classes to define indexes
+   * @returns {Array<Object>} Array of index definitions
+   * @property {Object} key - Index key specification (e.g., { field: 1 })
+   * @property {Object} [options={}] - Index options (e.g., { unique: true })
+   * @property {Object} [duplicateKey] - Key structure for duplicate detection (defaults to key if unique)
+   * @property {string} [description] - Description for logging
+   * @example
+   * return [
+   *   {
+   *     key: { provider_id: 1, title_key: 1 },
+   *     options: { unique: true },
+   *     duplicateKey: { provider_id: 1, title_key: 1 },
+   *     description: 'Primary lookup (unique compound key)'
+   *   }
+   * ];
+   */
+  getIndexDefinitions() {
+    // Override in child classes
+    return [];
+  }
+
+  /**
+   * Remove duplicate documents before creating unique index
+   * Keeps the most recent document based on lastUpdated or createdAt
+   * @private
+   * @param {Object} duplicateKey - Key structure for duplicate detection
+   * @returns {Promise<number>} Number of duplicates removed
+   */
+  async _removeDuplicates(duplicateKey) {
+    const collection = this.db.collection(this.collectionName);
+    
+    // Build aggregation pipeline to find duplicates
+    const groupId = {};
+    for (const [field, direction] of Object.entries(duplicateKey)) {
+      groupId[field] = `$${field}`;
+    }
+
+    const duplicates = await collection.aggregate([
+      {
+        $group: {
+          _id: groupId,
+          count: { $sum: 1 },
+          docs: { $push: '$$ROOT' }
+        }
+      },
+      {
+        $match: { count: { $gt: 1 } }
+      }
+    ]).toArray();
+
+    if (duplicates.length === 0) {
+      return 0;
+    }
+
+    logger.info(`Found ${duplicates.length} duplicate key groups in ${this.collectionName}, removing duplicates...`);
+    let totalRemoved = 0;
+
+    for (const dup of duplicates) {
+      const docs = dup.docs;
+      // Sort by lastUpdated (descending), then by createdAt (descending) to keep the most recent
+      docs.sort((a, b) => {
+        const aDate = a.lastUpdated || a.createdAt || new Date(0);
+        const bDate = b.lastUpdated || b.createdAt || new Date(0);
+        return bDate.getTime() - aDate.getTime();
+      });
+
+      // Keep the first (most recent), remove the rest
+      const toRemove = docs.slice(1);
+      if (toRemove.length > 0) {
+        const idsToRemove = toRemove.map(d => d._id);
+        const result = await collection.deleteMany({ _id: { $in: idsToRemove } });
+        totalRemoved += result.deletedCount;
+        logger.debug(`Removed ${result.deletedCount} duplicate(s) for key: ${JSON.stringify(dup._id)}`);
+      }
+    }
+
+    logger.info(`Removed ${totalRemoved} duplicate document(s) from ${this.collectionName}`);
+    return totalRemoved;
+  }
+
+  /**
+   * Initialize database indexes for this collection
+   * Uses getIndexDefinitions() to get index configuration
+   * Automatically handles duplicate cleanup for unique indexes
+   * @returns {Promise<void>}
+   */
+  async initializeIndexes() {
+    try {
+      const indexDefinitions = this.getIndexDefinitions();
+      
+      if (indexDefinitions.length === 0) {
+        logger.debug(`No index definitions found for ${this.collectionName}`);
+        return;
+      }
+
+      for (const indexDef of indexDefinitions) {
+        const { key, options = {}, duplicateKey, description } = indexDef;
+        
+        // For unique indexes, check and remove duplicates first
+        if (options.unique === true) {
+          const dupKey = duplicateKey || key;
+          await this._removeDuplicates(dupKey);
+        }
+
+        // Create the index
+        const created = await this.createIndexIfNotExists(key, options);
+        const indexDesc = description || JSON.stringify(key);
+        if (created) {
+          logger.debug(`Created index in ${this.collectionName}: ${indexDesc}`);
+        } else {
+          logger.debug(`Index already exists in ${this.collectionName}: ${indexDesc}`);
+        }
+      }
+
+      logger.info(`${this.collectionName} indexes initialized`);
+    } catch (error) {
+      logger.error(`Error initializing indexes for ${this.collectionName}: ${error.message}`);
+      throw error;
+    }
+  }
 }
 

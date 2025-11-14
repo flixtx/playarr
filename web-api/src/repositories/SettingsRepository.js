@@ -40,22 +40,17 @@ export class SettingsRepository extends BaseRepository {
   }
 
   /**
-   * Initialize database indexes for settings collection
-   * Creates all required indexes if they don't exist
-   * @returns {Promise<void>}
+   * Get index definitions for settings collection
+   * @returns {Array<Object>} Array of index definitions
    */
-  async initializeIndexes() {
-    try {
-      // CRITICAL: _id is automatically indexed by MongoDB (no need to create)
-      // MEDIUM: Changed settings query
-      await this.createIndexIfNotExists({ lastUpdated: 1 });
-      logger.debug('Created index: lastUpdated');
-
-      logger.info('SettingsRepository indexes initialized');
-    } catch (error) {
-      logger.error(`Error initializing indexes: ${error.message}`);
-      throw error;
-    }
+  getIndexDefinitions() {
+    return [
+      {
+        key: { lastUpdated: 1 },
+        options: {},
+        description: 'Changed settings query'
+      }
+    ];
   }
 
   /**
