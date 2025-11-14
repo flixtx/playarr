@@ -385,6 +385,82 @@ async function initialize() {
     webSocketService.initialize(server);
     logger.info('Socket.IO server initialized');
 
+    // Initialize log stream transport
+    const { setLogStreamWebSocketService, setLogStreamLevel, getLogBuffer, getLogStreamLevel } = await import('./utils/logger.js');
+    setLogStreamWebSocketService(webSocketService);
+
+    // Load log stream level from settings (default to 'info')
+    try {
+      const logLevelResult = await settingsManager.getSetting('log_stream_level');
+      let logLevel = logLevelResult.response?.value || 'info';
+      // Convert 'debug' to 'info' if it exists (debug is no longer supported)
+      if (logLevel === 'debug') {
+        logLevel = 'info';
+        await settingsManager.setSetting('log_stream_level', 'info');
+        logger.info('Converted log_stream_level from "debug" to "info" (debug is no longer supported)');
+      }
+      setLogStreamLevel(logLevel);
+      logger.info(`Log stream level initialized to: ${logLevel}`);
+    } catch (error) {
+      logger.warn(`Failed to load log stream level from settings, using default 'info': ${error.message}`);
+      setLogStreamLevel('info');
+    }
+
+    // Add WebSocket event handlers for log streaming
+    const defaultNamespace = webSocketService.getDefaultNamespace();
+    if (defaultNamespace) {
+      defaultNamespace.on('connection', async (socket) => {
+        // Handle log subscription - send current buffer and level
+        socket.on('log:subscribe', async () => {
+          try {
+            const { getLogStreamLevel } = await import('./utils/logger.js');
+            const level = getLogStreamLevel();
+            // Get filtered buffer based on current level
+            const buffer = getLogBuffer(level);
+            socket.emit('log:buffer', {
+              lines: buffer,
+              totalLines: buffer.length,
+              level: level
+            });
+          } catch (error) {
+            logger.error('Error sending log buffer:', error);
+            socket.emit('log:error', { message: 'Failed to retrieve log buffer' });
+          }
+        });
+
+        // Handle log level change
+        socket.on('log:set_level', async (data) => {
+          try {
+            const { level } = data;
+            const { getAvailableLogLevels } = await import('./utils/logger.js');
+            const availableLevels = getAvailableLogLevels();
+
+            if (!availableLevels.includes(level)) {
+              socket.emit('log:error', { message: `Invalid log level: ${level}. Must be one of: ${availableLevels.join(', ')}` });
+              return;
+            }
+
+            setLogStreamLevel(level);
+
+            // Save to settings for persistence
+            await settingsManager.setSetting('log_stream_level', level);
+            
+            // Send updated filtered buffer with new level
+            const { getLogStreamLevel } = await import('./utils/logger.js');
+            const filteredBuffer = getLogBuffer(level);
+            socket.emit('log:level_changed', { 
+              level,
+              lines: filteredBuffer,
+              totalLines: filteredBuffer.length
+            });
+          } catch (error) {
+            logger.error('Error setting log level:', error);
+            socket.emit('log:error', { message: `Failed to set log level: ${error.message}` });
+          }
+        });
+      });
+    }
+
     // Start HTTP server
     server.listen(PORT, async () => {
       logger.info(`Server running on port ${PORT}`);

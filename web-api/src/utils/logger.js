@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs-extra';
 import dotenv from 'dotenv';
+import { LogStreamTransport, LOG_LEVELS } from './logStreamTransport.js';
 
 dotenv.config();
 
@@ -82,10 +83,68 @@ const baseLogger = winston.createLogger({
 
 const loggerCache = new Map();
 
+// Store reference to log stream transport
+let logStreamTransportInstance = null;
+
+// Create log stream transport instance
+logStreamTransportInstance = new LogStreamTransport({
+  maxLines: 1000,
+  level: 'info' // Default level
+});
+
+// Add log stream transport to base logger
+baseLogger.add(logStreamTransportInstance);
+
 export function createLogger(context) {
   if (!loggerCache.has(context)) {
     const child = baseLogger.child({ context });
     loggerCache.set(context, child);
   }
   return loggerCache.get(context);
+}
+
+/**
+ * Set WebSocket service on log stream transport
+ * @param {object} webSocketService - WebSocketService instance
+ */
+export function setLogStreamWebSocketService(webSocketService) {
+  if (logStreamTransportInstance) {
+    logStreamTransportInstance.setWebSocketService(webSocketService);
+    logStreamTransportInstance.clearBuffer(); // Clear on startup
+  }
+}
+
+/**
+ * Get current log buffer, optionally filtered by level
+ * @param {string} [filterLevel] - Optional level to filter by
+ * @returns {Array<string>} Array of log lines
+ */
+export function getLogBuffer(filterLevel = null) {
+  return logStreamTransportInstance ? logStreamTransportInstance.getLogBuffer(filterLevel) : [];
+}
+
+/**
+ * Set log stream level
+ * @param {string} level - Log level (error, warn, info, debug)
+ */
+export function setLogStreamLevel(level) {
+  if (logStreamTransportInstance) {
+    logStreamTransportInstance.setLevel(level);
+  }
+}
+
+/**
+ * Get current log stream level
+ * @returns {string} Current log level
+ */
+export function getLogStreamLevel() {
+  return logStreamTransportInstance ? logStreamTransportInstance.getLevel() : 'info';
+}
+
+/**
+ * Get available log levels
+ * @returns {Array<string>} Array of available log levels
+ */
+export function getAvailableLogLevels() {
+  return ['error', 'warn', 'info'];
 }

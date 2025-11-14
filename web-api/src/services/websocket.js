@@ -75,6 +75,14 @@ class WebSocketService {
   }
 
   /**
+   * Get the default namespace Socket.IO instance
+   * @returns {object|null} Socket.IO instance or null if not initialized
+   */
+  getDefaultNamespace() {
+    return this._io;
+  }
+
+  /**
    * Broadcast an event to all connected Socket.IO clients
    * @param {string} event - Event name
    * @param {object} data - Event data

@@ -6,6 +6,7 @@ import SettingsUsers from './settings/SettingsUsers';
 import SettingsGeneral from './settings/SettingsGeneral';
 import SettingsIPTVProviders from './settings/SettingsIPTVProviders';
 import SettingsJobs from './settings/SettingsJobs';
+import SettingsLogger from './settings/SettingsLogger';
 import { setActiveTab } from '../store/slices/settingsSlice';
 
 function TabPanel({ children, value, index }) {
@@ -55,6 +56,7 @@ const Settings = ({ open, onClose }) => {
               <Tab label="General" />
               <Tab label="IPTV Providers" />
               <Tab label="Jobs" />
+              <Tab label="Logs" />
             </Tabs>
           </Box>
 
@@ -72,6 +74,10 @@ const Settings = ({ open, onClose }) => {
 
           <TabPanel value={activeTab} index={3}>
             <SettingsJobs />
+          </TabPanel>
+
+          <TabPanel value={activeTab} index={4}>
+            <SettingsLogger />
           </TabPanel>
 
           {/* TMDBWatchlistImport component kept for potential future use */}
