@@ -66,7 +66,6 @@ class SettingsManager extends BaseManager {
       // Update each setting individually
       for (const [key, value] of Object.entries(settings)) {
         await this._settingsRepo.updateOne(
-          this._settingsRepo.collectionName,
           { _id: key },
           { $set: { value, lastUpdated: new Date() } },
           { upsert: true }

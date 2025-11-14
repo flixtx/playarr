@@ -1,5 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { Box, TextField, Button, CircularProgress, InputAdornment, IconButton, Tooltip, FormControlLabel, Checkbox } from '@mui/material';
+import { 
+    Box, 
+    TextField, 
+    CircularProgress, 
+    InputAdornment, 
+    IconButton, 
+    Tooltip, 
+    FormControlLabel, 
+    Checkbox,
+    Card,
+    CardContent,
+    CardHeader,
+    Grid
+} from '@mui/material';
 import SaveIcon from '@mui/icons-material/Save';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
@@ -25,7 +38,7 @@ const SettingsGeneral = () => {
                 setTmdbApiKey(tmdbResponse.data.value || '');
                 
                 // Fetch log unmanaged endpoints setting
-                const logResponse = await axiosInstance.get('/api/settings/log_unmanaged_endpoints');
+                const logResponse = await axiosInstance.get(API_ENDPOINTS.settings.logUnmanagedEndpoints);
                 setLogUnmanagedEndpoints(logResponse.data.value === true);
             } catch (error) {
                 // handle error if needed
@@ -50,7 +63,7 @@ const SettingsGeneral = () => {
     const handleSaveLogSetting = async () => {
         setIsSavingLogSetting(true);
         try {
-            await axiosInstance.post('/api/settings/log_unmanaged_endpoints', { 
+            await axiosInstance.post(API_ENDPOINTS.settings.logUnmanagedEndpoints, { 
                 value: logUnmanagedEndpoints 
             });
         } catch (error) {
@@ -66,65 +79,87 @@ const SettingsGeneral = () => {
 
     return (
         <Box sx={{ p: 3 }}>
-            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, mb: 4 }}>
-                <TextField
-                    label="TMDB API Key"
-                    value={tmdbApiKey}
-                    onChange={(e) => setTmdbApiKey(e.target.value)}
-                    fullWidth
-                    type={showApiKey ? 'text' : 'password'}
-                    InputProps={{
-                        endAdornment: (
-                            <InputAdornment position="end">
-                                <Tooltip title={showApiKey ? 'Hide API key' : 'Show API key'}>
+            <Grid container spacing={3}>
+                {/* TMDB Provider Card */}
+                <Grid item xs={12} sm={6} md={4} lg={3}>
+                    <Card sx={{ height: '100%' }}>
+                        <CardHeader 
+                            title="TMDB Provider"
+                            subheader="Configure TMDB API settings"
+                            action={
+                                <Tooltip title="Save settings">
                                     <IconButton
-                                        onClick={() => setShowApiKey(!showApiKey)}
-                                        edge="end"
-                                        aria-label="toggle api key visibility"
+                                        onClick={handleSaveTmdbApiKey}
+                                        disabled={isSaving}
+                                        color="primary"
+                                        aria-label="save tmdb settings"
                                     >
-                                        {showApiKey ? <VisibilityOffIcon /> : <VisibilityIcon />}
+                                        {isSaving ? <CircularProgress size={24} /> : <SaveIcon />}
                                     </IconButton>
                                 </Tooltip>
-                            </InputAdornment>
-                        )
-                    }}
-                />
-                <Button
-                    variant="contained"
-                    color="primary"
-                    onClick={handleSaveTmdbApiKey}
-                    disabled={isSaving}
-                    sx={{
-                        minWidth: '48px',
-                        width: '48px',
-                        height: '56px',
-                        p: 0
-                    }}
-                >
-                    {isSaving ? <CircularProgress size={24} /> : <SaveIcon />}
-                </Button>
-            </Box>
-            
-            {/* Add checkbox for log unmanaged endpoints */}
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                <FormControlLabel
-                    control={
-                        <Checkbox
-                            checked={logUnmanagedEndpoints}
-                            onChange={(e) => {
-                                setLogUnmanagedEndpoints(e.target.checked);
-                                // Auto-save on change
-                                setTimeout(() => {
-                                    handleSaveLogSetting();
-                                }, 0);
-                            }}
-                            disabled={isSavingLogSetting}
+                            }
                         />
-                    }
-                    label="Log unmanaged endpoints"
-                />
-                {isSavingLogSetting && <CircularProgress size={20} />}
-            </Box>
+                        <CardContent>
+                            <TextField
+                                label="TMDB API Key"
+                                value={tmdbApiKey}
+                                onChange={(e) => setTmdbApiKey(e.target.value)}
+                                fullWidth
+                                type={showApiKey ? 'text' : 'password'}
+                                InputProps={{
+                                    endAdornment: (
+                                        <InputAdornment position="end">
+                                            <Tooltip title={showApiKey ? 'Hide API key' : 'Show API key'}>
+                                                <IconButton
+                                                    onClick={() => setShowApiKey(!showApiKey)}
+                                                    edge="end"
+                                                    aria-label="toggle api key visibility"
+                                                >
+                                                    {showApiKey ? <VisibilityOffIcon /> : <VisibilityIcon />}
+                                                </IconButton>
+                                            </Tooltip>
+                                        </InputAdornment>
+                                    )
+                                }}
+                            />
+                        </CardContent>
+                    </Card>
+                </Grid>
+
+                {/* Debug Card */}
+                <Grid item xs={12} sm={6} md={4} lg={3}>
+                    <Card sx={{ height: '100%' }}>
+                        <CardHeader 
+                            title="Debug"
+                            subheader="Debug and logging settings"
+                            action={
+                                <Tooltip title="Save settings">
+                                    <IconButton
+                                        onClick={handleSaveLogSetting}
+                                        disabled={isSavingLogSetting}
+                                        color="primary"
+                                        aria-label="save debug settings"
+                                    >
+                                        {isSavingLogSetting ? <CircularProgress size={24} /> : <SaveIcon />}
+                                    </IconButton>
+                                </Tooltip>
+                            }
+                        />
+                        <CardContent>
+                            <FormControlLabel
+                                control={
+                                    <Checkbox
+                                        checked={logUnmanagedEndpoints}
+                                        onChange={(e) => setLogUnmanagedEndpoints(e.target.checked)}
+                                        disabled={isSavingLogSetting}
+                                    />
+                                }
+                                label="Log unmanaged endpoints"
+                            />
+                        </CardContent>
+                    </Card>
+                </Grid>
+            </Grid>
         </Box>
     );
 };

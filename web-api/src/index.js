@@ -104,6 +104,10 @@ app.use((err, req, res, next) => {
 // Initialize application
 async function initialize() {
   try {
+    logger.info('──────────────────────────────────────────────');
+    logger.info(`🟢 Application started at ${new Date().toISOString()}`);
+    logger.info('──────────────────────────────────────────────');
+
     logger.debug('Initializing application...');
 
     // Step 1: Initialize services (bottom-up)

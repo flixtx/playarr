@@ -47,6 +47,7 @@ export const API_ENDPOINTS = {
     // Settings endpoints
     settings: {
         tmdbToken: '/settings/tmdb_token',
+        logUnmanagedEndpoints: '/settings/log_unmanaged_endpoints',
     },
 
     // Jobs endpoints
