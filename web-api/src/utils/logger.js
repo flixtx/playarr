@@ -9,30 +9,36 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ─────────────────────────────────────────────
-// Setup log directory and rotation
-// ─────────────────────────────────────────────
 const logsDir = process.env.LOGS_DIR || path.join(__dirname, '../../../logs');
 const apiLogPath = path.join(logsDir, 'api.log');
 
-fs.ensureDirSync(logsDir); // ensures directory exists, recursively
+fs.ensureDirSync(logsDir);
 
+// Start fresh each run — clear previous content
 if (fs.existsSync(apiLogPath)) {
-  const stats = fs.statSync(apiLogPath);
-  const createdAt = stats.birthtime;
-  const timestamp = createdAt.toISOString().replace(/[:.]/g, '-').replace('T', '_').replace('Z', '');
-  const archivedLog = path.join(logsDir, `api_${timestamp}.log`);
-  fs.renameSync(apiLogPath, archivedLog);
+  fs.truncateSync(apiLogPath, 0);
 }
 
-// ─────────────────────────────────────────────
-// Create base Winston logger (shared globally)
-// ─────────────────────────────────────────────
 const baseFormat = winston.format.combine(
   winston.format.timestamp(),
-  winston.format.printf(({ timestamp, level, message, context, ...meta }) => {
+  winston.format.printf((info) => {
+    const { timestamp, level, message, context, ...metadata } = info;
     const contextStr = context ? `[${context}]` : '';
-    return `${timestamp} ${contextStr} ${level.toUpperCase()}: ${message}`;
+    let output = `${timestamp} ${contextStr} ${level.toUpperCase()}: ${message}`;
+    
+    // Include metadata if present (exclude Winston internal fields)
+    const metadataKeys = Object.keys(metadata).filter(key => 
+      !['splat', 'Symbol(level)', 'Symbol(message)', 'Symbol(splat)'].includes(key)
+    );
+    if (metadataKeys.length > 0) {
+      const cleanMetadata = {};
+      metadataKeys.forEach(key => {
+        cleanMetadata[key] = metadata[key];
+      });
+      output += `\n${JSON.stringify(cleanMetadata, null, 2)}`;
+    }
+    
+    return output;
   })
 );
 
@@ -42,33 +48,40 @@ const baseLogger = winston.createLogger({
     new winston.transports.Console({
       level: 'info',
       format: winston.format.combine(
-        winston.format.timestamp(),
         winston.format.colorize(),
-        winston.format.printf(({ timestamp, level, message, context }) => {
+        winston.format.printf((info) => {
+          const { timestamp, level, message, context, ...metadata } = info;
           const contextStr = context ? `[${context}]` : '';
-          return `${timestamp} ${contextStr} ${level}: ${message}`;
+          let output = `${timestamp} ${contextStr} ${level}: ${message}`;
+          
+          // Include metadata if present (exclude Winston internal fields)
+          const metadataKeys = Object.keys(metadata).filter(key => 
+            !['splat', 'Symbol(level)', 'Symbol(message)', 'Symbol(splat)'].includes(key)
+          );
+          if (metadataKeys.length > 0) {
+            const cleanMetadata = {};
+            metadataKeys.forEach(key => {
+              cleanMetadata[key] = metadata[key];
+            });
+            output += `\n${JSON.stringify(cleanMetadata, null, 2)}`;
+          }
+          
+          return output;
         })
       )
     }),
     new winston.transports.File({
       level: 'debug',
       filename: apiLogPath,
-      maxsize: 10485760, // 10MB
-      maxFiles: 5
+      maxsize: 10485760, // 10MB per file
+      maxFiles: 5,        // Keep 5 files max
+      tailable: true       // Keeps order: api.log → api1.log → api2.log...
     })
   ]
 });
 
-// ─────────────────────────────────────────────
-// Cache for per-class loggers
-// ─────────────────────────────────────────────
 const loggerCache = new Map();
 
-/**
- * Returns a cached Winston logger for a given context/class.
- * @param {string} context - Context name (e.g., 'UserService', 'ProvidersService')
- * @returns {winston.Logger} Child Winston logger
- */
 export function createLogger(context) {
   if (!loggerCache.has(context)) {
     const child = baseLogger.child({ context });
