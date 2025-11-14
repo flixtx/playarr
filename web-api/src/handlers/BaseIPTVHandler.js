@@ -698,6 +698,11 @@ export class BaseIPTVHandler extends BaseHandler {
    */
   async saveAllIgnoredTitles(allIgnored) {
     try {
+      // Early return if no ignored titles
+      if (!allIgnored || typeof allIgnored !== 'object' || Object.keys(allIgnored).length === 0) {
+        return;
+      }
+
       const now = new Date();
       
       // Group titles by reason for bulk updates
@@ -712,6 +717,9 @@ export class BaseIPTVHandler extends BaseHandler {
       // Build bulk operations: one updateMany per reason group
       const operations = [];
       for (const [reason, titleKeys] of Object.entries(titlesByReason)) {
+        if (!Array.isArray(titleKeys) || titleKeys.length === 0) {
+          continue;
+        }
         // Process in batches if a single reason has too many titles (MongoDB $in limit)
         const batchSize = 1000; // MongoDB $in operator limit is much higher, but 1000 is safe
         for (let i = 0; i < titleKeys.length; i += batchSize) {
@@ -738,7 +746,9 @@ export class BaseIPTVHandler extends BaseHandler {
         // Process all operations in batches of 1000
         for (let i = 0; i < operations.length; i += 1000) {
           const batch = operations.slice(i, i + 1000);
-          await this.providerTitleRepo.bulkWrite(this.providerTitleRepo.collectionName, batch, { ordered: false });
+          if (Array.isArray(batch) && batch.length > 0) {
+            await this.providerTitleRepo.bulkWrite(batch, { ordered: false });
+          }
         }
       }
       

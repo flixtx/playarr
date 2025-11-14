@@ -41,11 +41,13 @@ export class TMDBHandler extends BaseHandler {
     this._typeConfig = {
       movies: {
         buildStreams: this._buildMovieStreams.bind(this),
-        tvgType: 'movie'
+        tvgType: 'movie',
+        tmdbType: 'movie'
       },
       tvshows: {
         buildStreams: this._buildTVShowStreams.bind(this),
-        tvgType: 'series'
+        tvgType: 'series',
+        tmdbType: 'tv'
       }
     };
   }
@@ -344,8 +346,12 @@ export class TMDBHandler extends BaseHandler {
         await Promise.all(batch.map(async (mainTitle) => {
           try {
             // Determine tmdbType from each title's type
-            const tmdbType = mainTitle.type === 'movies' ? 'movie' : 'tv';
             const type = mainTitle.type;
+            const tmdbType = this._typeConfig[type]?.tmdbType;
+            if (!tmdbType) {
+              this.logger.warn(`Invalid media type: ${type}, skipping`);
+              return; // Return early instead of continue
+            }
             
             const similarTitleIds = await this.getSimilarTitleKeys(
               tmdbType,
@@ -861,7 +867,10 @@ export class TMDBHandler extends BaseHandler {
    * @returns {Promise<number|null>} TMDB ID if matched, null otherwise
    */
   async matchTMDBIdForTitle(title, type, providerType) {
-    const tmdbType = type === 'movies' ? 'movie' : 'tv';
+    const tmdbType = this._typeConfig[type]?.tmdbType;
+    if (!tmdbType) {
+      throw new Error(`Invalid media type: ${type}. Must be 'movies' or 'tvshows'`);
+    }
 
     // Strategy 1: For AGTV provider, try using title_id (IMDB ID) directly
     // Note: Xtream providers either have tmdb_id from extended info or fall through to search
@@ -869,7 +878,7 @@ export class TMDBHandler extends BaseHandler {
       try {
         // Check if title_id looks like an IMDB ID (starts with 'tt')
         if (title.title_id.startsWith('tt')) {
-          const result = await this.findByIMDBId(title.title_id, type);
+          const result = await this.findByIMDBId(title.title_id, tmdbType);
           
           if (!result) {
             this.logger.debug(`IMDB ID lookup returned null/undefined for ${title.title_id} (type: ${type})`);
@@ -886,7 +895,7 @@ export class TMDBHandler extends BaseHandler {
           }
         }
       } catch (error) {
-        this.logger.debug(`IMDB ID lookup failed for ${title.title_id}: ${error.message}`);
+        this.logger.debug(`IMDB ID lookup failed for ${title.title_id}: ${error.message || error.toString()}`);
       }
     }
 
@@ -915,7 +924,7 @@ export class TMDBHandler extends BaseHandler {
           return searchResult.results[0].id;
         }
       } catch (error) {
-        this.logger.debug(`Search failed for "${titleName}": ${error.message}`);
+        this.logger.debug(`Search failed for "${titleName}": ${error.message || error.toString()}`);
       }
     }
 
@@ -930,7 +939,10 @@ export class TMDBHandler extends BaseHandler {
    * @returns {Promise<{mainTitle: Object, streamsDict: Object}|null>} Object with main title and streams dictionary, or null if API call fails
    */
   async generateMainTitle(tmdbId, type, providerTitleGroups) {
-    const tmdbType = type === 'movies' ? 'movie' : 'tv';
+    const tmdbType = this._typeConfig[type]?.tmdbType;
+    if (!tmdbType) {
+      throw new Error(`Invalid media type: ${type}. Must be 'movies' or 'tvshows'`);
+    }
     
     try {
       // Fetch TMDB details

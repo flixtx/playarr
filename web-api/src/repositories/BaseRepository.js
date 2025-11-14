@@ -432,7 +432,19 @@ export class BaseRepository {
           const optionsUnique = options.unique === true;
           
           if (indexUnique === optionsUnique) {
-            return false; // Already exists
+            return false; // Already exists with matching properties
+          } else {
+            // Index exists with same keys but different properties (e.g., unique vs non-unique)
+            // Drop the old index first to avoid name conflicts
+            // MongoDB auto-generates index names based on keys, so same keys = same name
+            try {
+              await collection.dropIndex(index.name);
+            } catch (dropError) {
+              // If drop fails, try to continue - might be a race condition
+              // The createIndex call below will handle the conflict
+              logger.debug(`Failed to drop existing index ${index.name}: ${dropError.message}`);
+            }
+            break; // Exit loop and create new index
           }
         }
       }
@@ -440,8 +452,14 @@ export class BaseRepository {
       await collection.createIndex(keySpec, options);
       return true; // Created
     } catch (error) {
-      // Check if error is about index already existing with different name
-      if (error.message && error.message.includes('already exists')) {
+      // Check if error is about index already existing with same name
+      if (error.message && (
+        error.message.includes('already exists') ||
+        error.message.includes('same name as the requested index')
+      )) {
+        // Index conflict - likely a race condition or the drop didn't work
+        // Return false to indicate we couldn't create it, but don't throw
+        logger.warn(`Index creation skipped due to conflict: ${error.message}`);
         return false;
       }
       throw error;

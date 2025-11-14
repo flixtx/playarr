@@ -399,39 +399,88 @@ export class BaseProvider {
    * @param {string} options.url - Full URL to fetch
    * @param {Object} [options.headers={}] - Request headers
    * @param {Bottleneck} [options.limiter] - Rate limiter (uses this.limiter if not provided)
-   * @param {Function} [options.transform] - Optional transform function for response data
+   * @param {Function} [options.transform] - Optional transform function for response data (receives data, responseStatus)
+   * @param {boolean} [options.skipCache=false] - Skip caching (don't check or write cache)
+   * @param {number} [options.timeout] - Request timeout in milliseconds (creates AbortController)
+   * @param {AbortSignal} [options.signal] - AbortSignal for request cancellation
+   * @param {boolean} [options.allowNonOk=false] - Allow non-OK responses (don't throw, return data anyway)
    * @returns {Promise<Object>} JSON response data
    */
-  async _fetchJsonWithCache({ providerId, type, endpoint, cacheParams = {}, url, headers = {}, limiter = null, transform = null }) {
+  async _fetchJsonWithCache({ providerId, type, endpoint, cacheParams = {}, url, headers = {}, limiter = null, transform = null, skipCache = false, timeout = null, signal = null, allowNonOk = false }) {
     const limiterToUse = limiter || this.limiter;
     if (!limiterToUse) {
       throw new Error('Rate limiter is required');
     }
 
-    // Check cache first
-    const cached = this._getCache(providerId, type, endpoint, cacheParams);
-    if (cached !== null) {
-      this.logger.debug(`Cache hit for ${endpoint}: ${providerId}/${type}`);
-      return cached;
+    // Check cache first (unless skipping cache)
+    if (!skipCache) {
+      const cached = this._getCache(providerId, type, endpoint, cacheParams);
+      if (cached !== null) {
+        this.logger.debug(`Cache hit for ${endpoint}: ${providerId}/${type}`);
+        return cached;
+      }
     }
 
-    // Make API call with rate limiting
-    const data = await limiterToUse.schedule(async () => {
-      const response = await fetch(url, { headers });
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ status_message: `HTTP ${response.status}` }));
-        throw new Error(errorData.status_message || `API error: ${response.status}`);
+    // Set up timeout if provided
+    let controller = null;
+    let timeoutId = null;
+    let abortSignal = signal;
+    
+    if (timeout && !signal) {
+      controller = new AbortController();
+      abortSignal = controller.signal;
+      timeoutId = setTimeout(() => {
+        this.logger.debug(`Timeout for ${url}`);
+        controller.abort();
+      }, timeout);
+    }
+
+    try {
+      // Make API call with rate limiting
+      let responseStatus = null;
+      const data = await limiterToUse.schedule(async () => {
+        
+        const response = await fetch(url, { headers, signal: abortSignal });
+        responseStatus = response.status;
+        
+        if (!response.ok && !allowNonOk) {
+          const errorData = await response.json().catch(() => ({ status_message: `HTTP ${response.status}` }));
+        
+          throw new Error(errorData.status_message || `API error: ${response.status}`);
+        }
+        
+        return await response.json();
+      });
+
+      // Clear timeout if it was set
+      if (timeoutId) {
+        clearTimeout(timeoutId);
       }
-      return await response.json();
-    });
 
-    // Transform data if transform function provided
-    const finalData = transform ? transform(data) : data;
+      // Transform data if transform function provided (pass responseStatus as second arg)
+      const finalData = transform ? transform(data, responseStatus) : data;
 
-    // Cache the result
-    this._setCache(providerId, type, endpoint, finalData, cacheParams);
+      // Cache the result (unless skipping cache)
+      if (!skipCache) {
+        this._setCache(providerId, type, endpoint, finalData, cacheParams);
+      }
 
-    return finalData;
+      return finalData;
+    } catch (error) {
+      // Clear timeout if it was set
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      
+      // Handle AbortError (timeout)
+      if (error.name === 'AbortError') {
+        throw new Error('Request timeout');
+      } else {
+        this.logger.error(`Error fetching ${url}: ${error.message}`);
+      }
+      
+      throw error;
+    }
   }
 
   /**

@@ -33,6 +33,37 @@ class ProvidersManager extends BaseManager {
     this._titleStreamRepo = titleStreamRepo;
     this._titleRepo = titleRepo;
     this._providerRepo = providerRepo;
+    
+    // JobsManager for triggering jobs (set after initialization)
+    this._jobsManager = null;
+  }
+
+  /**
+   * Set JobsManager instance for triggering jobs
+   * @param {import('./jobs.js').JobsManager} jobsManager - Jobs manager instance
+   */
+  setJobsManager(jobsManager) {
+    this._jobsManager = jobsManager;
+  }
+
+  /**
+   * Trigger syncIPTVProviderTitles job
+   * @private
+   * @returns {Promise<void>}
+   */
+  async _triggerSyncJob() {
+    if (!this._jobsManager) {
+      this.logger.warn('JobsManager not available, cannot trigger sync job');
+      return;
+    }
+    
+    try {
+      await this._jobsManager.triggerJob('syncIPTVProviderTitles');
+      this.logger.info('Triggered syncIPTVProviderTitles job');
+    } catch (error) {
+      this.logger.error(`Failed to trigger syncIPTVProviderTitles job: ${error.message}`);
+      // Don't throw - allow provider operation to continue even if job trigger fails
+    }
   }
 
   /**
@@ -530,6 +561,11 @@ class ProvidersManager extends BaseManager {
       // Reload provider configs in provider instances
       await this._reloadProviderConfigs();
 
+      // Trigger sync job if provider is enabled
+      if (providerData.enabled !== false) {
+        await this._triggerSyncJob();
+      }
+
       // Broadcast WebSocket event
       this._webSocketService.broadcastEvent('provider_changed', {
         provider_id: providerData.id,
@@ -627,6 +663,9 @@ class ProvidersManager extends BaseManager {
         } catch (error) {
           this.logger.error(`Error resetting titles lastUpdated for provider ${providerId}: ${error.message}`);
         }
+        
+        // Trigger sync job to fetch fresh data
+        await this._triggerSyncJob();
       }
 
       // Update in array and save
@@ -866,6 +905,9 @@ class ProvidersManager extends BaseManager {
 
       // Reload provider configs in provider instances
       await this._reloadProviderConfigs();
+
+      // Trigger sync job to fetch fresh data with new categories
+      await this._triggerSyncJob();
 
       // Broadcast WebSocket event
       this._webSocketService.broadcastEvent('provider_changed', {

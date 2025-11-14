@@ -1,5 +1,11 @@
 import { BaseManager } from './BaseManager.js';
-import jobsConfig from '../jobs.json' with { type: 'json' };
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const jobsConfig = JSON.parse(readFileSync(join(__dirname, '../jobs.json'), 'utf-8'));
 
 /**
  * Jobs manager for managing jobs
@@ -70,9 +76,10 @@ class JobsManager extends BaseManager {
       const jobs = jobsConfig.jobs || [];
 
       // Get job history for each job from MongoDB
+      // Use job.name because that's what's stored in the database (BaseJob uses this.jobName)
       const jobsWithHistory = await Promise.all(
         jobs.map(async (job) => {
-          const jobHistory = await this._getJobHistory(job.jobHistoryName || job.name);
+          const jobHistory = await this._getJobHistory(job.name);
           return this._formatJobData(job, jobHistory);
         })
       );

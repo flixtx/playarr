@@ -4,17 +4,15 @@
       "name": "syncIPTVProviderTitles",
       "jobHistoryName": "SyncIPTVProviderTitlesJob",
       "interval": "1h",
-      "timeout": "5s",
       "description": "Fetch metadata from IPTV providers and match TMDB IDs",
-      "schedule": "Every 1 hour"
+      "schedule": "Every 1 hour",
+      "postExecute": ["providerTitlesMonitor"]
     },
     {
       "name": "providerTitlesMonitor",
       "jobHistoryName": "ProviderTitlesMonitorJob",
-      "interval": "1m",
-      "timeout": "1m",
-      "description": "Monitor provider titles for changes",
-      "schedule": "Every 1 minute"
+      "description": "Monitor provider titles for changes and process main titles (triggered by syncIPTVProviderTitles)",
+      "schedule": "Triggered by syncIPTVProviderTitles completion"
     }
   ]
 }

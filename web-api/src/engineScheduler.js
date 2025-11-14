@@ -1,6 +1,12 @@
 import { createLogger } from './utils/logger.js';
-import jobsConfig from './jobs.json' with { type: 'json' };
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 import { JobsManager } from './managers/JobsManager.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const jobsConfig = JSON.parse(readFileSync(join(__dirname, 'jobs.json'), 'utf-8'));
 
 /**
  * Engine scheduler class for the Playarr Web-API
@@ -39,20 +45,41 @@ export class EngineScheduler {
     }
 
     const scheduledJobs = jobsConfig.jobs.filter(job => job.interval);
-    this._jobsManager = new JobsManager(null, jobsConfig, this, this._jobHistoryRepo);
+    this._jobsManager = new JobsManager(jobsConfig, this._jobHistoryRepo);
 
     // Set up individual intervals for each scheduled job
+    // Run jobs immediately, then set up interval for subsequent runs
     scheduledJobs.forEach(job => {
       const intervalMs = this._parseTime(job.interval);
-      const intervalId = setInterval(async () => {
+      const timeout = this._parseTime(job.timeout || '0');
+      
+      // Function to run the job
+      const runJobAsync = async () => {
         try {
           await this.runJob(job.name);
         } catch (error) {
           this.logger.error(`Error running scheduled job '${job.name}': ${error.message}`);
         }
-      }, intervalMs);
+      };
+      
+      // Set up interval for recurring execution
+      const intervalId = setInterval(runJobAsync, intervalMs);
       this._intervalIds.set(job.name, intervalId);
       this.logger.debug(`Scheduled job '${job.name}' to run every ${job.interval}`);
+      
+      // Run job immediately on startup (with optional timeout delay)
+      // This ensures jobs run right away instead of waiting for the first interval
+      (async () => {
+        if (timeout > 0) {
+          await new Promise(resolve => setTimeout(resolve, timeout));
+        }
+        try {
+          this.logger.info(`Running job '${job.name}' on startup${timeout > 0 ? ` (after ${job.timeout} delay)` : ''}`);
+          await runJobAsync();
+        } catch (error) {
+          this.logger.error(`Error running job '${job.name}' on startup: ${error.message}`);
+        }
+      })();
     });
 
     if (scheduledJobs.length > 0) {
@@ -60,23 +87,6 @@ export class EngineScheduler {
     }
 
     this.logger.info('EngineScheduler initialized');
-
-    // Run scheduled jobs on startup asynchronously (don't block initialization)
-    // This allows the API server to start immediately
-    for (const job of scheduledJobs) {
-      const timeout = this._parseTime(job.timeout || '0');
-      // Run each job asynchronously without blocking
-      (async () => {
-        if (timeout > 0) {
-          await new Promise(resolve => setTimeout(resolve, timeout));
-        }
-        try {
-          await this.runJob(job.name);
-        } catch (error) {
-          this.logger.error(`Error running job '${job.name}' on startup: ${error.message}`);
-        }
-      })();
-    }
   }
 
   /**

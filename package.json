@@ -8,7 +8,6 @@
     "start:api": "npm --prefix web-api start",
     "dev:ui": "cross-env PORT=3001 npm --prefix web-ui start",
     "dev:api": "npm --prefix web-api run dev",
-    "dev:web": "concurrently \"npm run dev:api\" \"npm run dev:ui\"",
     "dev:all": "concurrently \"npm run dev:api\" \"npm run dev:ui\"",
     "install:api": "npm --prefix web-api install",
     "install:ui": "npm --prefix web-ui install",

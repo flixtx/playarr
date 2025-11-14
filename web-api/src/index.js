@@ -13,23 +13,6 @@ dotenv.config();
 // Rotate log file on startup using the log file's creation date (before logger is created)
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const logsDir = process.env.LOGS_DIR || path.join(__dirname, '../../../logs');
-const apiLogPath = path.join(logsDir, 'api.log');
-if (fsExtra.existsSync(apiLogPath)) {
-  const stats = fsExtra.statSync(apiLogPath);
-  const creationDate = stats.birthtime || stats.mtime; // Use birthtime if available, fallback to mtime
-  const timestamp = creationDate.toISOString().replace(/[:.]/g, '-').slice(0, -5);
-  let rotatedLogPath = path.join(logsDir, `api-${timestamp}.log`);
-  
-  // If destination already exists, append a counter to make it unique
-  let counter = 1;
-  while (fsExtra.existsSync(rotatedLogPath)) {
-    rotatedLogPath = path.join(logsDir, `api-${timestamp}-${counter}.log`);
-    counter++;
-  }
-  
-  fsExtra.moveSync(apiLogPath, rotatedLogPath);
-}
 
 // Import logger
 import { createLogger } from './utils/logger.js';
@@ -48,7 +31,8 @@ import { SettingsRepository } from './repositories/SettingsRepository.js';
 import { UserRepository } from './repositories/UserRepository.js';
 import { StatsRepository } from './repositories/StatsRepository.js';
 import { EngineScheduler } from './engineScheduler.js';
-import jobsConfig from './jobs.json' with { type: 'json' };
+import { readFileSync } from 'fs';
+const jobsConfig = JSON.parse(readFileSync(path.join(__dirname, 'jobs.json'), 'utf-8'));
 
 // Import job classes
 import { SyncIPTVProviderTitlesJob } from './jobs/SyncIPTVProviderTitlesJob.js';
@@ -266,8 +250,11 @@ async function initialize() {
     await jobScheduler.initialize();
     logger.info('Job scheduler initialized and started');
     
-    // Initialize JobsManager (needs scheduler)
+    // Initialize JobsManager
     const jobsManager = new JobsManager(jobsConfig, jobScheduler, jobHistoryRepo);
+
+    // Set JobsManager on ProvidersManager for job triggering
+    providersManager.setJobsManager(jobsManager);
 
     // Initialize user manager (creates default admin user)
     await userManager.initialize();

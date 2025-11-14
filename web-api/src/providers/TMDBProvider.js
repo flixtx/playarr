@@ -89,27 +89,31 @@ export class TMDBProvider extends BaseProvider {
    * @returns {Promise<Object>} Verification result with success, status_message, status_code
    */
   async verifyApiKey(apiKey) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT);
+    const headers = this._buildHeaders(apiKey);
 
     try {
-      const response = await fetch(TMDB_AUTH_URL, {
-        method: 'GET',
-        headers: this._buildHeaders(apiKey),
-        signal: controller.signal,
+      const result = await this._fetchJsonWithCache({
+        providerId: 'tmdb',
+        type: 'auth', // Dummy type for verification endpoint
+        endpoint: 'tmdb-verify',
+        cacheParams: {},
+        url: TMDB_AUTH_URL,
+        headers,
+        skipCache: true, // Don't cache verification results
+        timeout: API_REQUEST_TIMEOUT,
+        allowNonOk: true, // Allow 401 responses for invalid keys
+        transform: (data, responseStatus) => {
+          return {
+            success: responseStatus === 200 && data.success === true,
+            status_message: data.status_message,
+            status_code: responseStatus
+          };
+        }
       });
 
-      clearTimeout(timeoutId);
-      const responseData = await response.json();
-
-      return {
-        success: response.ok && response.status === 200 && responseData.success === true,
-        status_message: responseData.status_message,
-        status_code: response.status
-      };
+      return result;
     } catch (error) {
-      clearTimeout(timeoutId);
-      if (error.name === 'AbortError') {
+      if (error.message === 'Request timeout') {
         return { 
           success: false, 
           status_message: 'Request timeout', 
@@ -158,35 +162,27 @@ export class TMDBProvider extends BaseProvider {
   /**
    * Find TMDB ID by IMDB ID
    * @param {string} imdbId - IMDB ID
+   * @param {string} type - Media type: 'movie' or 'tv' (required)
    * @returns {Promise<Object>} TMDB find results
    */
-  async findByIMDBId(imdbId, type = null) {
+  async findByIMDBId(imdbId, type) {
     if (!this._apiKey) {
       throw new Error('TMDB API key not set. Call updateApiKey() first.');
     }
 
-    const url = `${TMDB_API_URL}/find/${imdbId}?external_source=imdb_id`;
-
-    // Only use cache if type is provided
-    if (type && this._storage) {
-      return await this._fetchJsonWithCache({
-        providerId: 'tmdb',
-        type,
-        endpoint: 'tmdb-find',
-        cacheParams: { imdbId },
-        url,
-        headers: this._headers
-      });
+    if (!type) {
+      throw new Error('Type parameter is required for findByIMDBId');
     }
 
-    // No caching if type not provided (backward compatibility)
-    return await this.limiter.schedule(async () => {
-      const response = await fetch(url, { headers: this._headers });
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.status_message || `TMDB API error: ${response.status}`);
-      }
-      return await response.json();
+    const url = `${TMDB_API_URL}/find/${imdbId}?external_source=imdb_id`;
+
+    return await this._fetchJsonWithCache({
+      providerId: 'tmdb',
+      type,
+      endpoint: 'tmdb-find',
+      cacheParams: { imdbId },
+      url,
+      headers: this._headers
     });
   }
 
@@ -282,12 +278,12 @@ export class TMDBProvider extends BaseProvider {
         type: 'movie',
         endpoint: 'tmdb-search',
         dirBuilder: (cacheDir, providerId, params) => {
-          return path.join(cacheDir, 'tmdb', 'search', 'movie');
+          return path.join(cacheDir, 'tmdb', 'movie', 'search');
         },
         fileBuilder: (cacheDir, providerId, type, params) => {
           const safeTitle = (params.title || '').replace(/[^a-zA-Z0-9]/g, '_');
           const yearStr = params.year ? `_${params.year}` : '_no-year';
-          const dirPath = path.join(cacheDir, 'tmdb', 'search', type);
+          const dirPath = path.join(cacheDir, 'tmdb', 'movie', 'search');
           return path.join(dirPath, `${safeTitle}${yearStr}.json`);
         },
         ttl: null // Never expire
@@ -296,12 +292,12 @@ export class TMDBProvider extends BaseProvider {
         type: 'tv',
         endpoint: 'tmdb-search',
         dirBuilder: (cacheDir, providerId, params) => {
-          return path.join(cacheDir, 'tmdb', 'search', 'tv');
+          return path.join(cacheDir, 'tmdb', 'tv', 'search');
         },
         fileBuilder: (cacheDir, providerId, type, params) => {
           const safeTitle = (params.title || '').replace(/[^a-zA-Z0-9]/g, '_');
           const yearStr = params.year ? `_${params.year}` : '_no-year';
-          const dirPath = path.join(cacheDir, 'tmdb', 'search', type);
+          const dirPath = path.join(cacheDir, 'tmdb', 'tv', 'search');
           return path.join(dirPath, `${safeTitle}${yearStr}.json`);
         },
         ttl: null // Never expire
@@ -346,7 +342,7 @@ export class TMDBProvider extends BaseProvider {
           if (!params.tmdbId) {
             throw new Error('tmdbId is required for tmdb-details endpoint');
           }
-          const dirPath = path.join(cacheDir, 'tmdb', type, 'details');
+          const dirPath = path.join(cacheDir, 'tmdb', 'movie', 'details');
           return path.join(dirPath, `${params.tmdbId}.json`);
         },
         ttl: null // Never expire
@@ -361,7 +357,7 @@ export class TMDBProvider extends BaseProvider {
           if (!params.tmdbId) {
             throw new Error('tmdbId is required for tmdb-details endpoint');
           }
-          const dirPath = path.join(cacheDir, 'tmdb', type, 'details');
+          const dirPath = path.join(cacheDir, 'tmdb', 'tv', 'details');
           return path.join(dirPath, `${params.tmdbId}.json`);
         },
         ttl: null // Never expire
@@ -392,7 +388,7 @@ export class TMDBProvider extends BaseProvider {
             throw new Error('tmdbId is required for tmdb-similar endpoint');
           }
           const page = params.page || 1;
-          const dirPath = path.join(cacheDir, 'tmdb', type, 'similar');
+          const dirPath = path.join(cacheDir, 'tmdb', 'movie', 'similar');
           return path.join(dirPath, `${params.tmdbId}-${page}.json`);
         },
         ttl: null // Never expire
@@ -408,7 +404,7 @@ export class TMDBProvider extends BaseProvider {
             throw new Error('tmdbId is required for tmdb-similar endpoint');
           }
           const page = params.page || 1;
-          const dirPath = path.join(cacheDir, 'tmdb', type, 'similar');
+          const dirPath = path.join(cacheDir, 'tmdb', 'tv', 'similar');
           return path.join(dirPath, `${params.tmdbId}-${page}.json`);
         },
         ttl: null // Never expire

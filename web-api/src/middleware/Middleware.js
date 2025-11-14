@@ -131,7 +131,7 @@ class Middleware {
       }
 
       // Remove password_hash and MongoDB _id from user object
-      const { password_hash, _id, watchlist, ...userPublic } = user;
+      const { password_hash, _id, ...userPublic } = user;
 
       // Attach user to request object (matches Python's request.user)
       req.user = userPublic;
