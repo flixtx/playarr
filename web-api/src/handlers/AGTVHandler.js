@@ -283,16 +283,17 @@ export class AGTVHandler extends BaseIPTVHandler {
       return [];
     }
 
-    const m3u8ContentLines = [];
+    let m3u8ContentLines;
     
     if (config.isPaginated) {
-      const aggregatedContent = await this._fetchPaginatedM3U8(type, config.pageSizeThreshold);
-      m3u8ContentLines.push(...aggregatedContent);
+      // Paginated endpoint (TV shows) - already returns complete array of lines
+      m3u8ContentLines = await this._fetchPaginatedM3U8(type, config.pageSizeThreshold);
     } else {
+      // Single endpoint (movies)
       try {
         this.logger.debug(`Fetching M3U8 from providersManager: ${this.providerId}/${type}`);
         const m3u8Content = await this.providersManager.fetchM3U8(this.providerId, type, null);
-        m3u8ContentLines.push(...m3u8Content.split('\n'));
+        m3u8ContentLines = m3u8Content.split('\n');
       } catch (error) {
         this.logger.error(`Error fetching AGTV ${type}: ${error.message}`);
         throw error;
