@@ -148,18 +148,17 @@ export class AGTVHandler extends BaseIPTVHandler {
    * Parse M3U8 content and extract title information
    * Iterates through lines, creates stream objects, and routes to type-specific parser
    * @private
-   * @param {string} content - M3U8 file content
+   * @param {Array<string>} lines - M3U8 file content as array of lines
    * @param {string} type - Content type ('movies' or 'tvshows')
    * @returns {{titles: TitleData[], streamCount: number}} Object containing parsed titles and stream count
    */
-  _parseM3U8Content(content, type) {
+  _parseM3U8Content(lines, type) {
     const config = this._typeConfig[type];
     if (!config || !config.parseFunction) {
       throw new Error(`No parse function configured for type: ${type}`);
     }
 
     // Parse M3U8 lines and create stream objects
-    const lines = content.split('\n');
     const streams = [];
     let currentMetadata = null;
 
@@ -213,6 +212,65 @@ export class AGTVHandler extends BaseIPTVHandler {
   }
 
   /**
+   * Fetch paginated M3U8 content from all pages and aggregate into array of lines
+   * Collects all M3U8 lines from all pages first, then returns aggregated lines array
+   * @private
+   * @param {string} type - Media type ('movies' or 'tvshows')
+   * @param {number} pageSizeThreshold - Threshold to determine if there are more pages
+   * @returns {Promise<Array<string>>} Aggregated M3U8 lines array from all pages
+   */
+  async _fetchPaginatedM3U8(type, pageSizeThreshold) {
+    const allM3U8Lines = [];
+    let page = 1;
+
+    while (true) {
+      try {
+        // Fetch M3U8 content from providersManager (rate limiting handled by provider)
+        this.logger.debug(`Fetching M3U8 from providersManager: ${this.providerId}/${type}${page ? `/${page}` : ''}`);
+        const m3u8Content = await this.providersManager.fetchM3U8(this.providerId, type, page);
+        
+        if (!m3u8Content || m3u8Content.trim().length === 0) {
+          break;
+        }
+
+        // Count "#EXTINF:" lines to determine if there are more pages
+        const extinfCount = (m3u8Content.match(/#EXTINF:/g) || []).length;
+        
+        if (extinfCount === 0) {
+          break; // No streams in this page
+        }
+
+        // Collect lines from this page
+        const lines = m3u8Content.split('\n');
+
+        if (allM3U8Lines.length == 0) {
+          allM3U8Lines.push(lines[0]);
+        }
+
+        const linesWithoutHeader = lines.filter(line => !line.trim().startsWith('#EXTM3U'));
+        allM3U8Lines.push(...linesWithoutHeader);
+
+        // Check if we have more pages (if count >= threshold, there's another page)
+        if (extinfCount < pageSizeThreshold) {
+          break; // Last page
+        }
+
+        page++;
+      } catch (error) {
+        if (error.message && error.message.includes('Page not found')) {
+          // End of pagination
+          break;
+        }
+        this.logger.error(`Error fetching AGTV ${type} page ${page}: ${error.message}`);
+        break;
+      }
+    }
+
+    // Return aggregated M3U8 lines array
+    return allM3U8Lines;
+  }
+
+  /**
    * Fetch titles metadata from AGTV provider via M3U8 (using providersManager directly)
    * @private
    * @param {string} type - Media type ('movies' or 'tvshows')
@@ -225,62 +283,27 @@ export class AGTVHandler extends BaseIPTVHandler {
       return [];
     }
 
-    const allTitles = [];
+    const m3u8ContentLines = [];
     
     if (config.isPaginated) {
-      // Paginated endpoint (TV shows)
-      let page = 1;
-
-      while (true) {
-        try {
-          // Fetch M3U8 content from providersManager (rate limiting handled by provider)
-          this.logger.debug(`Fetching M3U8 from providersManager: ${this.providerId}/${type}${page ? `/${page}` : ''}`);
-          const m3u8Content = await this.providersManager.fetchM3U8(this.providerId, type, page);
-
-          const { titles, streamCount } = this._parseM3U8Content(m3u8Content, type);
-
-          if (!titles || titles.length === 0) {
-            break;
-          }
-          
-          allTitles.push(...titles);
-
-          // Check stream count (not title count) against threshold
-          // For TV shows, multiple streams are grouped into one title,
-          // so we need to check the actual stream count to determine if there are more pages
-          if (streamCount < config.pageSizeThreshold) {
-            break;
-          }
-
-          page++;
-        } catch (error) {
-          if (error.message && error.message.includes('Page not found')) {
-            // End of pagination
-            break;
-          }
-          this.logger.error(`Error fetching AGTV ${type} page ${page}: ${error.message}`);
-          break;
-        }
-      }
-
-      this.logger.info(`${type}: Loaded ${allTitles.length} titles`);
+      const aggregatedContent = await this._fetchPaginatedM3U8(type, config.pageSizeThreshold);
+      m3u8ContentLines.push(...aggregatedContent);
     } else {
-      // Single endpoint (movies)
       try {
-        // Fetch M3U8 content from providersManager (rate limiting handled by provider)
         this.logger.debug(`Fetching M3U8 from providersManager: ${this.providerId}/${type}`);
         const m3u8Content = await this.providersManager.fetchM3U8(this.providerId, type, null);
-
-        const { titles } = this._parseM3U8Content(m3u8Content, type);
-        allTitles.push(...titles);
-        this.logger.info(`${type}: Loaded ${titles.length} titles`);
+        m3u8ContentLines.push(...m3u8Content.split('\n'));
       } catch (error) {
         this.logger.error(`Error fetching AGTV ${type}: ${error.message}`);
         throw error;
       }
     }
 
-    return allTitles;
+    const { titles } = this._parseM3U8Content(m3u8ContentLines, type);
+          
+    this.logger.info(`${type}: Loaded ${titles.length} titles`);
+
+    return titles;
   }
 
   /**
