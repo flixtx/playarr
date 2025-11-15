@@ -380,33 +380,20 @@ class TitlesManager extends BaseManager {
 
       // Get total count for pagination (before watchlist filter, as watchlist is applied in memory)
       let totalCount = await this._titleRepo.count(mongoQuery);
-
-      // Fetch all matching titles (we need to filter by watchlist in memory)
-      // But limit to a reasonable maximum to avoid memory issues
-      // For watchlist filtering, we'll need to load titles, but we can still use MongoDB for other filters
-      const MAX_TITLES_FOR_WATCHLIST_FILTER = 10000;
-      const shouldLimitForWatchlist = watchlist !== null && totalCount > MAX_TITLES_FOR_WATCHLIST_FILTER;
       
       // Build findMany options
       const findOptions = {
         sort: { title: 1 }
       };
       
-      // If watchlist filter is active and we have too many results, we need to load more
-      // Otherwise, we can paginate at MongoDB level
-      if (watchlist === null && !shouldLimitForWatchlist) {
+      // If watchlist filter is active, we need to load all matching titles to filter in memory
+      // Otherwise, we can paginate at MongoDB level for better performance
+      if (watchlist === null) {
         // No watchlist filter - use MongoDB pagination
         findOptions.skip = (page - 1) * perPage;
         findOptions.limit = perPage;
-      } else {
-        // Watchlist filter active - need to load all matching titles to filter
-        // But limit to prevent memory issues
-        if (totalCount > MAX_TITLES_FOR_WATCHLIST_FILTER) {
-          this.logger.warn(`Too many titles (${totalCount}) for watchlist filtering. Limiting to ${MAX_TITLES_FOR_WATCHLIST_FILTER}`);
-          findOptions.limit = MAX_TITLES_FOR_WATCHLIST_FILTER;
-          totalCount = MAX_TITLES_FOR_WATCHLIST_FILTER;
-        }
       }
+      // If watchlist filter is active, load all matching titles (no limit) to filter in memory
 
       const titlesData = await this._titleRepo.findMany(mongoQuery, findOptions);
 

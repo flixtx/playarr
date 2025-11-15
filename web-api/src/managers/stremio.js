@@ -136,41 +136,10 @@ class StremioManager extends BaseManager {
   }
 
   /**
-   * Get watchlist titles for a specific media type
-   * Optimized to query MongoDB directly for only watchlist titles
-   * This bypasses the 10k limit in getTitles and ensures ALL watchlist titles are returned
-   * @private
-   * @param {Object} user - Authenticated user object
-   * @param {string} mediaType - Media type ('movies' or 'tvshows')
-   * @returns {Promise<Array<Object>>} Array of title objects
-   */
-  async _getWatchlistTitles(user, mediaType) {
-    // Get titles in watchlist from user only (no fallbacks)
-    if (!user || !user.watchlist || !Array.isArray(user.watchlist)) {
-      return [];
-    }
-
-    const watchlistTitleKeys = user.watchlist.filter(key => key.startsWith(`${mediaType}-`));
-    
-    if (watchlistTitleKeys.length === 0) {
-      return [];
-    }
-
-    // Query MongoDB directly for only the watchlist titles
-    // Access titleRepo through titlesManager (same pattern as XtreamManager)
-    const titles = await this._titlesManager._titleRepo.findByTitleKeys(watchlistTitleKeys);
-
-    if (!titles || titles.length === 0) {
-      return [];
-    }
-
-    return titles;
-  }
-
-  /**
    * Get catalog for a specific type
+   * Returns all titles of the specified type (no watchlist filtering - handled by Stremio UI)
    * @param {string} type - Catalog type ('movie' or 'series')
-   * @param {Object} user - User object
+   * @param {Object} user - User object (used for authentication only, not for filtering)
    * @param {Object} options - Query options (page, perPage, etc.)
    * @returns {Promise<Object>} Stremio catalog response
    */
@@ -183,11 +152,13 @@ class StremioManager extends BaseManager {
         return { metas: [] };
       }
       
-      // Get watchlist titles directly (optimized, no 10k limit)
-      // This ensures ALL user's watchlist titles are returned
-      const watchlistTitles = await this._getWatchlistTitles(user, playarrType);
+      // Query all titles of this type (no watchlist filtering - handled by Stremio UI)
+      const query = { type: playarrType };
+      const allTitles = await this._titlesManager._titleRepo.findByQuery(query, {
+        sort: { title: 1 }
+      });
       
-      if (!watchlistTitles || watchlistTitles.length === 0) {
+      if (!allTitles || allTitles.length === 0) {
         return { metas: [] };
       }
 
@@ -196,7 +167,7 @@ class StremioManager extends BaseManager {
       const perPage = options.perPage || 100;
       const startIdx = (page - 1) * perPage;
       const endIdx = startIdx + perPage;
-      const paginatedTitles = watchlistTitles.slice(startIdx, endIdx);
+      const paginatedTitles = allTitles.slice(startIdx, endIdx);
 
       // Transform titles to Stremio format
       const metas = paginatedTitles.map(title => this._titleToStremioMeta(title, type));
