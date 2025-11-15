@@ -202,7 +202,7 @@ export class TMDBProvider extends BaseProvider {
       throw new Error(`Invalid media type: ${type}. Must be 'movie' or 'tv'`);
     }
 
-    const url = `${TMDB_API_URL}${typeConfig.detailsEndpoint}/${tmdbId}`;
+    const url = `${TMDB_API_URL}${typeConfig.detailsEndpoint}/${tmdbId}?append_to_response=external_ids`;
 
     return await this._fetchJsonWithCache({
       providerId: 'tmdb',

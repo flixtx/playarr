@@ -1422,6 +1422,12 @@ export class TMDBHandler extends BaseHandler {
 
       const now = new Date().toISOString();
       
+      // Extract imdb_id from external_ids if available
+      let imdbId = null;
+      if (apiData.external_ids && apiData.external_ids.imdb_id) {
+        imdbId = apiData.external_ids.imdb_id;
+      }
+      
       // Build base main title structure
       const mainTitle = {
         title_id: tmdbId,
@@ -1434,6 +1440,7 @@ export class TMDBHandler extends BaseHandler {
         overview: apiData.overview || null,
         poster_path: apiData.poster_path || null,
         genres: apiData.genres || [],
+        imdb_id: imdbId,
         streams: {},
         createdAt: now,
         lastUpdated: now

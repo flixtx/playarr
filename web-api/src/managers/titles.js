@@ -15,6 +15,7 @@ import { DatabaseCollections, toCollectionName } from '../config/collections.js'
  * @property {string} [backdrop_path] - TMDB backdrop path (relative path)
  * @property {Array<{name: string}|string>} [genres] - Array of genre objects or strings
  * @property {number} [runtime] - Runtime in minutes (movies only)
+ * @property {string} [imdb_id] - IMDB ID (e.g., "tt0133093") if available
  * @property {Object<string, StreamData>} streams - Stream data object
  * @property {string[]} [similar_titles] - Array of title_key strings for similar titles
  * @property {string} [createdAt] - ISO timestamp when title was first created
