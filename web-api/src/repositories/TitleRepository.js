@@ -100,6 +100,11 @@ export class TitleRepository extends BaseRepository {
         key: { release_date: 1 },
         options: {},
         description: 'Release date only'
+      },
+      {
+        key: { type: 1, imdb_id: 1 },
+        options: { sparse: true }, // Sparse index since imdb_id may be null for some titles
+        description: 'Stremio IMDB ID lookups (type + imdb_id)'
       }
     ];
   }
