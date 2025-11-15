@@ -259,7 +259,7 @@ class StremioManager extends BaseManager {
   /**
    * Get streams for a specific title
    * @param {string} type - Content type ('movie' or 'series') - comes from endpoint path
-   * @param {string} stremioId - Stremio ID (TMDB ID number, e.g., "12345", IMDB ID, e.g., "tt0133093", or episode format, e.g., "tt0133093-S01-E01")
+   * @param {string} stremioId - Stremio ID (TMDB ID number, e.g., "12345", IMDB ID, e.g., "tt0133093", episode format with dashes, e.g., "tt0133093-S01-E01", or Stremio colon format, e.g., "tt7491982:1:1")
    * @param {Object} user - User object
    * @param {number} [season] - Season number (for series)
    * @param {number} [episode] - Episode number (for series)
@@ -268,7 +268,7 @@ class StremioManager extends BaseManager {
    */
   async getStreams(type, stremioId, user, season = null, episode = null, baseUrl = '') {
     try {
-      // For series, stremioId might be in format "101200-S01-E01" or "tt0133093-S01-E01" (episode ID from meta)
+      // For series, stremioId might be in format "101200-S01-E01", "tt0133093-S01-E01", or "tt7491982:1:1" (Stremio colon format)
       // For movies, stremioId is just the title_id number or IMDB ID
       // Check if type is series using mapping
       const isSeries = this._typeMap[type] === this._playarrTypes.TVSHOWS;
@@ -300,21 +300,45 @@ class StremioManager extends BaseManager {
             titleId = idPart;
           }
         } else {
-          // Fallback: treat as just title_id or IMDB ID, use season/episode from query params
-          if (stremioId.startsWith('tt')) {
-            // Look up title by imdb_id to get title_id
-            const titleKey = await this.stremioIdToTitleKey(stremioId, type);
-            if (titleKey) {
-              const match = titleKey.match(/^(movies|tvshows)-(\d+)$/);
-              titleId = match ? match[2] : null;
-            }
-            if (!titleId) {
-              return { streams: [] };
+          // Also try Stremio's colon format: "tt7491982:1:1" or "12345:1:1"
+          const colonFormatMatch = stremioId.match(/^(.+?):(\d+):(\d+)$/);
+          if (colonFormatMatch) {
+            const idPart = colonFormatMatch[1];
+            parsedSeason = parseInt(colonFormatMatch[2], 10);
+            parsedEpisode = parseInt(colonFormatMatch[3], 10);
+            mediaType = this._typeMap[type]; // 'tvshows'
+            
+            // Check if idPart is IMDB ID or TMDB ID
+            if (idPart.startsWith('tt')) {
+              // Look up title by imdb_id to get title_id
+              const titleKey = await this.stremioIdToTitleKey(idPart, type);
+              if (titleKey) {
+                const match = titleKey.match(/^(movies|tvshows)-(\d+)$/);
+                titleId = match ? match[2] : null;
+              }
+              if (!titleId) {
+                return { streams: [] };
+              }
+            } else {
+              titleId = idPart;
             }
           } else {
-            titleId = stremioId;
+            // Fallback: treat as just title_id or IMDB ID, use season/episode from query params
+            if (stremioId.startsWith('tt')) {
+              // Look up title by imdb_id to get title_id
+              const titleKey = await this.stremioIdToTitleKey(stremioId, type);
+              if (titleKey) {
+                const match = titleKey.match(/^(movies|tvshows)-(\d+)$/);
+                titleId = match ? match[2] : null;
+              }
+              if (!titleId) {
+                return { streams: [] };
+              }
+            } else {
+              titleId = stremioId;
+            }
+            mediaType = this._typeMap[type];
           }
-          mediaType = this._typeMap[type];
         }
       } else {
         // Movie: stremioId is just the title_id or IMDB ID
