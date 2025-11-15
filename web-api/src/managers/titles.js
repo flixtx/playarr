@@ -627,6 +627,7 @@ class TitlesManager extends BaseManager {
         watchlist: userWatchlist.has(titleKey),
         streams: flatStreams,
         similar_titles: expandedSimilarTitles,
+        imdb_id: titleData.imdb_id || null,
       };
 
       return {

@@ -24,6 +24,10 @@ class StremioRouter extends BaseRouter {
      */
     this.router.get('/:api_key/manifest.json', this.middleware.requireApiKey, async (req, res) => {
       try {
+        // Log full request URL for debugging
+        const fullUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+        this.logger.debug(`[Stremio] Manifest request: ${fullUrl}`);
+        
         // Verify API key matches the one in URL
         if (req.params.api_key !== req.user.api_key) {
           return this.returnErrorResponse(res, 401, 'Invalid API key');
@@ -53,6 +57,10 @@ class StremioRouter extends BaseRouter {
      */
     this.router.get('/:api_key/catalog/:type/:id.json', this.middleware.requireApiKey, async (req, res) => {
       try {
+        // Log full request URL for debugging
+        const fullUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+        this.logger.debug(`[Stremio] Catalog request: ${fullUrl}`, { type: req.params.type, id: req.params.id, query: req.query });
+        
         // Verify API key
         if (req.params.api_key !== req.user.api_key) {
           return this.returnErrorResponse(res, 401, 'Invalid API key');
@@ -87,6 +95,10 @@ class StremioRouter extends BaseRouter {
      */
     this.router.get('/:api_key/meta/:type/:id.json', this.middleware.requireApiKey, async (req, res) => {
       try {
+        // Log full request URL for debugging
+        const fullUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+        this.logger.debug(`[Stremio] Meta request: ${fullUrl}`, { type: req.params.type, id: req.params.id });
+        
         // Verify API key
         if (req.params.api_key !== req.user.api_key) {
           return this.returnErrorResponse(res, 401, 'Invalid API key');
@@ -118,6 +130,10 @@ class StremioRouter extends BaseRouter {
      */
     this.router.get('/:api_key/stream/:type/:id.json', this.middleware.requireApiKey, async (req, res) => {
       try {
+        // Log full request URL for debugging
+        const fullUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+        this.logger.debug(`[Stremio] Stream request: ${fullUrl}`, { type: req.params.type, id: req.params.id, season: req.query.season, episode: req.query.episode });
+        
         // Verify API key
         if (req.params.api_key !== req.user.api_key) {
           return this.returnErrorResponse(res, 401, 'Invalid API key');

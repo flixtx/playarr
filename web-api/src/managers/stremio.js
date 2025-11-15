@@ -214,6 +214,7 @@ class StremioManager extends BaseManager {
         vote_average: details.vote_average,
         genres: details.genres || [],
         runtime: details.runtime,
+        imdb_id: details.imdb_id || null,
         // Reconstruct streams object from flatStreams for episode extraction
         streams: this._reconstructStreamsFromFlat(details.streams || [])
       };
@@ -376,7 +377,8 @@ class StremioManager extends BaseManager {
    * @returns {Object} Stremio meta object
    */
   _titleToStremioMeta(title, type, includeDetails = false) {
-    const stremioId = this.titleKeyToStremioId(title.title_key);
+    // Use IMDB ID if available, otherwise use TMDB title_id
+    const stremioId = title.imdb_id || this.titleKeyToStremioId(title.title_key);
     const year = title.release_date ? new Date(title.release_date).getFullYear() : null;
 
     // Check types using mapping
@@ -482,12 +484,22 @@ class StremioManager extends BaseManager {
       const titleIdMatch = title.title_key.match(/^(movies|tvshows)-(\d+)$/);
       const titleId = titleIdMatch ? titleIdMatch[2] : null;
       
-      // Episode ID format: {title_id}-S{season}-E{episode} (e.g., "101200-S01-E01")
-      // This ensures each episode has a unique ID that includes season/episode info
-      // The stream endpoint will parse this to extract title_id, season, and episode
+      // Use IMDB ID format if available (Stremio colon format: "tt0295064:2:4")
+      // Otherwise use TMDB title_id format: "15183-S02-E04"
       const seasonStr = String(season).padStart(2, '0');
       const episodeStr = String(episode).padStart(2, '0');
-      const episodeId = titleId ? `${titleId}-S${seasonStr}-E${episodeStr}` : `${title.title_key}-S${seasonStr}-E${episodeStr}`;
+      let episodeId;
+      
+      if (title.imdb_id) {
+        // Use IMDB ID with colon format: "tt0295064:2:4"
+        episodeId = `${title.imdb_id}:${parseInt(season, 10)}:${parseInt(episode, 10)}`;
+      } else if (titleId) {
+        // Fallback to TMDB format: "15183-S02-E04"
+        episodeId = `${titleId}-S${seasonStr}-E${episodeStr}`;
+      } else {
+        // Last resort: use title_key format
+        episodeId = `${title.title_key}-S${seasonStr}-E${episodeStr}`;
+      }
       
       const episodeObj = {
         id: episodeId,
