@@ -416,6 +416,78 @@ export class TMDBHandler extends BaseHandler {
     this.logger.info(`Similar titles enrichment completed for ${processedCount} titles`);
   }
 
+
+  /**
+   * Detect gaps between main titles and provider titles based on lastUpdated timestamps
+   * @private
+   * @param {Object} main_titles_data - Dictionary: { type: { tmdb_id: lastUpdated } }
+   * @param {Object} provider_titles_data - Dictionary: { type: { tmdb_id: maxLastUpdated } }
+   * @returns {{to_create: Array, to_update: Array, to_delete: Array}} Action arrays
+   */
+  _detectGaps(main_titles_data, provider_titles_data) {
+    const to_create = [];
+    const to_update = [];
+    const to_delete = [];
+    
+    // Check all types
+    for (const type of ['movies', 'tvshows']) {
+      const mainData = main_titles_data[type] || {};
+      const providerData = provider_titles_data[type] || {};
+      
+      // Find all unique tmdb_ids
+      const allTmdbIds = new Set([
+        ...Object.keys(mainData).map(Number),
+        ...Object.keys(providerData).map(Number)
+      ]);
+      
+      for (const tmdbId of allTmdbIds) {
+        const mainLastUpdated = mainData[tmdbId] || null;
+        const providerMaxLastUpdated = providerData[tmdbId] || null;
+        
+        if (!mainLastUpdated && providerMaxLastUpdated) {
+          // Create: exists in provider but not in main
+          to_create.push({ type, tmdb_id: tmdbId });
+        } else if (mainLastUpdated && !providerMaxLastUpdated) {
+          // Delete: exists in main but not in provider
+          to_delete.push({ type, tmdb_id: tmdbId });
+        } else if (mainLastUpdated && providerMaxLastUpdated) {
+          // Compare timestamps
+          const mainTime = mainLastUpdated instanceof Date ? mainLastUpdated.getTime() : new Date(mainLastUpdated).getTime();
+          const providerTime = providerMaxLastUpdated instanceof Date ? providerMaxLastUpdated.getTime() : new Date(providerMaxLastUpdated).getTime();
+          
+          if (providerTime > mainTime) {
+            // Update: provider has newer timestamp
+            to_update.push({ type, tmdb_id: tmdbId });
+          }
+        }
+      }
+    }
+    
+    return { to_create, to_update, to_delete };
+  }
+
+  /**
+   * Cleanup title streams from title_streams collection
+   * @private
+   * @param {Array<string>} titleKeys - Array of title_key values
+   * @returns {Promise<void>}
+   */
+  async _cleanupTitleStreams(titleKeys) {
+    if (!titleKeys || titleKeys.length === 0) {
+      return;
+    }
+    
+    try {
+      const result = await this.titleStreamRepo.deleteManyByQuery({
+        title_key: { $in: titleKeys }
+      });
+      this.logger.debug(`Cleaned up ${result.deletedCount || 0} stream entries for ${titleKeys.length} title(s)`);
+    } catch (error) {
+      this.logger.error(`Error cleaning up title streams: ${error.message}`);
+      throw error;
+    }
+  }
+
   /**
    * Process main titles: generate, enrich similar, and generate streams
    * Orchestrates the complete main title processing workflow after TMDB ID matching
@@ -428,14 +500,336 @@ export class TMDBHandler extends BaseHandler {
       return { movies: 0, tvShows: 0 };
     }
 
-    // Generate main titles from provider titles with TMDB IDs
-    // Streams dictionary is now saved during title generation in _generateMainTitles
-    const result = await this.generateMainTitles(providerTitlesByProvider);
+    // Load main titles into cache for later use
+    await this.loadMainTitles();
 
-    // Run enrichSimilarTitles
-    await this.enrichSimilarTitles();
+    // Initialize arrays and dictionaries
+    const to_create = [];
+    const to_delete = [];
+    const to_update = [];
+    const main_titles_data = { movies: {}, tvshows: {} };
+    const provider_titles_data = { movies: {}, tvshows: {} };
 
-    return result;
+    // Query main titles with lastUpdated timestamp
+    const mainTitles = await this.titleRepo.getMainTitlesLastUpdated();
+    for (const title of mainTitles) {
+      if (title.type && title.title_id && title.lastUpdated) {
+        if (!main_titles_data[title.type]) {
+          main_titles_data[title.type] = {};
+        }
+        main_titles_data[title.type][title.title_id] = title.lastUpdated;
+      }
+    }
+
+    // Query provider titles and aggregate max lastUpdated
+    const providerTitles = await this.providerTitleRepo.getProviderTitlesForChangeDetection();
+    
+    // Group by type + tmdb_id and calculate max lastUpdated
+    const providerTitlesByKey = new Map();
+    for (const title of providerTitles) {
+      const key = `${title.type}-${title.tmdb_id}`;
+      
+      if (!providerTitlesByKey.has(key)) {
+        providerTitlesByKey.set(key, {
+          type: title.type,
+          tmdb_id: title.tmdb_id,
+          maxLastUpdated: null
+        });
+      }
+      
+      const group = providerTitlesByKey.get(key);
+      // Track max lastUpdated across all providers for this tmdb_id
+      if (title.lastUpdated) {
+        const titleTime = title.lastUpdated instanceof Date ? title.lastUpdated.getTime() : new Date(title.lastUpdated).getTime();
+        const currentMaxTime = group.maxLastUpdated ? (group.maxLastUpdated instanceof Date ? group.maxLastUpdated.getTime() : new Date(group.maxLastUpdated).getTime()) : 0;
+        
+        if (titleTime > currentMaxTime) {
+          group.maxLastUpdated = title.lastUpdated;
+        }
+      }
+    }
+    
+    // Map max lastUpdated for each type+tmdb_id group
+    for (const [key, group] of providerTitlesByKey) {
+      if (group.maxLastUpdated) {
+        if (!provider_titles_data[group.type]) {
+          provider_titles_data[group.type] = {};
+        }
+        provider_titles_data[group.type][group.tmdb_id] = group.maxLastUpdated;
+      }
+    }
+
+    // Detect gaps
+    const gaps = this._detectGaps(main_titles_data, provider_titles_data);
+    to_create.push(...gaps.to_create);
+    to_update.push(...gaps.to_update);
+    to_delete.push(...gaps.to_delete);
+
+    this.logger.info(`Gap detection: ${to_create.length} to create, ${to_update.length} to update, ${to_delete.length} to delete`);
+
+    // Step 1: Process deletions
+    if (to_delete.length > 0) {
+      const deleteTitleKeys = to_delete.map(t => generateTitleKey(t.type, t.tmdb_id));
+      
+      const deleteResult = await this.titleRepo.deleteManyByQuery({
+        title_key: { $in: deleteTitleKeys }
+      });
+      this.logger.info(`Deleted ${deleteResult.deletedCount || 0} main titles`);
+    }
+
+    // Step 2: Cleanup title streams for both delete and update title keys
+    const titleKeysToCleanup = [
+      ...to_delete.map(t => generateTitleKey(t.type, t.tmdb_id)),
+      ...to_update.map(t => generateTitleKey(t.type, t.tmdb_id))
+    ];
+    
+    if (titleKeysToCleanup.length > 0) {
+      await this._cleanupTitleStreams(titleKeysToCleanup);
+    }
+
+    // Step 3: Process updates and creates (they use the same logic - rebuild streams)
+    const toProcess = [...to_update, ...to_create];
+    if (toProcess.length > 0) {
+      // Fetch FULL provider titles for titles that need processing
+      // The getProviderTitlesForChangeDetection() only returns a projection,
+      // but we need full provider title objects with streams data for stream generation
+      this.logger.debug(`Fetching full provider titles for ${toProcess.length} title(s) to process`);
+      
+      const allProviderTitles = [];
+      const titlesByType = new Map();
+      
+      // Group by type and collect tmdb_ids
+      for (const t of toProcess) {
+        if (!titlesByType.has(t.type)) {
+          titlesByType.set(t.type, []);
+        }
+        titlesByType.get(t.type).push(t.tmdb_id);
+      }
+      
+      // Fetch full provider titles for each type
+      for (const [type, tmdbIds] of titlesByType) {
+        const typeProviderTitles = await this.providerTitleRepo.findByQuery({
+          type: type,
+          tmdb_id: { $in: tmdbIds },
+          ignored: false
+        });
+        allProviderTitles.push(...typeProviderTitles);
+      }
+      
+      // Group provider titles by type + tmdb_id for processing
+      const providerTitlesByTMDB = new Map();
+      for (const title of allProviderTitles) {
+        if (title.tmdb_id && title.type) {
+          const key = `${title.type}-${title.tmdb_id}`;
+          if (!providerTitlesByTMDB.has(key)) {
+            providerTitlesByTMDB.set(key, {
+              type: title.type,
+              providerTitleGroups: []
+            });
+          }
+          providerTitlesByTMDB.get(key).providerTitleGroups.push({
+            providerId: title.provider_id,
+            title: title
+          });
+        }
+      }
+
+      // Process creates and updates using existing generation logic
+      const titlesToProcess = toProcess.map(t => ({
+        type: t.type,
+        tmdbId: t.tmdb_id,
+        titleKey: generateTitleKey(t.type, t.tmdb_id),
+        providerTitleGroups: providerTitlesByTMDB.get(`${t.type}-${t.tmdb_id}`)?.providerTitleGroups || []
+      }));
+
+      // Get existing main titles for preservation
+      const allMainTitles = this.getMainTitles();
+      const existingMainTitleMap = new Map(
+        allMainTitles.map(t => [t.title_key || generateTitleKey(t.type, t.title_id), t])
+      );
+
+      const batchSize = this.getRecommendedBatchSize();
+      const result = await this._processTitlesBatch(batchSize, titlesToProcess, existingMainTitleMap);
+      
+      // Run enrichSimilarTitles
+      await this.enrichSimilarTitles();
+
+      return result;
+    } else {
+      // No titles to process, just run enrichSimilarTitles
+      await this.enrichSimilarTitles();
+      return { movies: 0, tvShows: 0 };
+    }
+  }
+
+  /**
+   * Process a batch of titles (create/update)
+   * @private
+   * @param {number} batchSize - Batch size for processing
+   * @param {Array<Object>} titlesToProcess - Array of { type, tmdbId, titleKey, providerTitleGroups }
+   * @param {Map<string, Object>} existingMainTitleMap - Map of existing main titles by title_key
+   * @returns {Promise<{movies: number, tvShows: number}>} Count of processed titles by type
+   */
+  async _processTitlesBatch(batchSize, titlesToProcess, existingMainTitleMap) {
+    const mainTitles = [];
+    let processedCount = 0;
+    const processedCountByType = { movies: 0, tvShows: 0 };
+    const allStreams = [];
+    const totalTitles = titlesToProcess.length;
+    const failedTitles = []; // Track titles that failed to get TMDB details
+
+    // Track time for periodic saves and progress logging
+    let lastSaveTime = Date.now();
+    const SAVE_INTERVAL_MS = 30000; // 30 seconds
+
+    try {
+      // Process in batches
+      for (let i = 0; i < titlesToProcess.length; i += batchSize) {
+        const batch = titlesToProcess.slice(i, i + batchSize);
+
+        await Promise.all(batch.map(async ({ type, tmdbId, titleKey, providerTitleGroups }) => {
+          if (providerTitleGroups.length === 0) {
+            this.logger.warn(`No provider titles found for ${type} ${tmdbId}`);
+            return;
+          }
+
+          const result = await this.generateMainTitle(tmdbId, type, providerTitleGroups);
+
+          if (result && result.mainTitle) {
+            const mainTitle = result.mainTitle;
+            
+            if (!mainTitle.type) mainTitle.type = type;
+            if (!mainTitle.title_key) mainTitle.title_key = titleKey;
+            
+            // Preserve createdAt if title already exists
+            const existing = existingMainTitleMap.get(titleKey);
+            if (existing && existing.createdAt) {
+              mainTitle.createdAt = existing.createdAt;
+            }
+            
+            mainTitles.push(mainTitle);
+            
+            // Convert streams dictionary to stream documents
+            if (result.streamsDict) {
+              allStreams.push(...Object.values(result.streamsDict));
+            }
+            
+            processedCount++;
+            if (type === 'movies') processedCountByType.movies++;
+            else if (type === 'tvshows') processedCountByType.tvShows++;
+          } else {
+            // TMDB details not found - mark for ignoring
+            failedTitles.push({ type, tmdbId });
+          }
+        }));
+
+        // Check if 30 seconds have passed since last save
+        const now = Date.now();
+        const timeSinceLastSave = now - lastSaveTime;
+
+        if (timeSinceLastSave >= SAVE_INTERVAL_MS) {
+          // Save accumulated data
+          if (mainTitles.length > 0) {
+            await this._saveMainTitles(mainTitles, existingMainTitleMap);
+            this.logger.debug(`Saved ${mainTitles.length} main titles (periodic save)`);
+            mainTitles.length = 0;
+          }
+          
+          if (allStreams.length > 0) {
+            const streamResult = await this.titleStreamRepo.bulkSave(allStreams, { addTimestamps: true });
+            this.logger.debug(`Saved ${streamResult.inserted + streamResult.updated} stream entries (periodic save)`);
+            allStreams.length = 0;
+          }
+
+          // Log progress
+          this.logger.info(`Progress: ${processedCount} out of ${totalTitles} titles processed`);
+
+          // Update last save time
+          lastSaveTime = now;
+        }
+      }
+
+      // Mark provider titles as ignored for titles that failed to get TMDB details
+      if (failedTitles.length > 0) {
+        await this._markProviderTitlesAsIgnored(failedTitles);
+      }
+
+      // Final save for any remaining data
+      if (mainTitles.length > 0) {
+        await this._saveMainTitles(mainTitles, existingMainTitleMap);
+        this.logger.debug(`Saved ${mainTitles.length} main titles (final save)`);
+      }
+      
+      if (allStreams.length > 0) {
+        const streamResult = await this.titleStreamRepo.bulkSave(allStreams, { addTimestamps: true });
+        this.logger.debug(`Saved ${streamResult.inserted + streamResult.updated} stream entries (final save)`);
+      }
+
+      // Final progress log
+      this.logger.info(`Completed: ${processedCount} out of ${totalTitles} titles processed`);
+
+      return processedCountByType;
+    } catch (error) {
+      this.logger.error(`Error processing titles batch: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Mark provider titles as ignored when TMDB details cannot be found
+   * @private
+   * @param {Array<Object>} failedTitles - Array of { type, tmdbId }
+   * @returns {Promise<void>}
+   */
+  async _markProviderTitlesAsIgnored(failedTitles) {
+    if (!failedTitles || failedTitles.length === 0) {
+      return;
+    }
+
+    const reason = 'no tmdb details found for the title';
+    const now = new Date();
+
+    try {
+      // Group by type for batch updates
+      const titlesByType = new Map();
+      for (const { type, tmdbId } of failedTitles) {
+        if (!titlesByType.has(type)) {
+          titlesByType.set(type, []);
+        }
+        titlesByType.get(type).push(tmdbId);
+      }
+
+      // Update provider titles for each type
+      for (const [type, tmdbIds] of titlesByType) {
+        // Process in batches to avoid MongoDB $in limit issues
+        const batchSize = 1000;
+        for (let i = 0; i < tmdbIds.length; i += batchSize) {
+          const tmdbIdsBatch = tmdbIds.slice(i, i + batchSize);
+          
+          const result = await this.providerTitleRepo.updateManyByQuery(
+            {
+              type: type,
+              tmdb_id: { $in: tmdbIdsBatch },
+              ignored: { $ne: true } // Only update titles that aren't already ignored
+            },
+            {
+              $set: {
+                ignored: true,
+                ignored_reason: reason,
+                lastUpdated: now
+              }
+            }
+          );
+
+          if (result.modifiedCount > 0) {
+            this.logger.info(`Marked ${result.modifiedCount} provider title(s) as ignored for ${type} (reason: ${reason})`);
+          }
+        }
+      }
+    } catch (error) {
+      this.logger.error(`Error marking provider titles as ignored: ${error.message}`);
+      // Don't throw - this is a non-critical operation
+    }
   }
 
   /**
@@ -1089,62 +1483,77 @@ export class TMDBHandler extends BaseHandler {
    */
   async _buildTVShowStreams(mainTitle, tmdbId, providerTitleGroups) {
     try {
-      // Get TV show details to get number of seasons
-      const tvShowDetails = await this.getTVShowDetails(tmdbId);
-      
-      if (!tvShowDetails || !tvShowDetails.seasons) {
-        this.logger.warn(`No seasons data found for TV show ID ${tmdbId}`);
-        return;
-      }
-
-      // Fetch all seasons in parallel
-      const seasonPromises = tvShowDetails.seasons
-        .filter(season => season.season_number >= 0) // Filter out specials (season_number < 0)
-        .map(season => this.getTVShowSeasonDetails(tmdbId, season.season_number));
-
-      const seasonsData = await Promise.all(seasonPromises);
-
-      // Build streams object: key is Sxx-Exx, value is object with episode metadata and sources array
+      // Build streams object based on provider data only
       const streamsMap = new Map();
 
-      // Initialize all episodes from TMDB with episode metadata and empty sources array
-      seasonsData.forEach(seasonData => {
-        if (seasonData && seasonData.episodes) {
-          seasonData.episodes.forEach(episode => {
-            const seasonStr = String(episode.season_number).padStart(2, '0');
-            const episodeStr = String(episode.episode_number).padStart(2, '0');
-            const streamKey = `S${seasonStr}-E${episodeStr}`;
-            
-            if (!streamsMap.has(streamKey)) {
-              streamsMap.set(streamKey, {
-                air_date: episode.air_date || null,
-                name: episode.name || null,
-                overview: episode.overview || null,
-                still_path: episode.still_path || null,
-                sources: []
-              });
-            }
-          });
-        }
-      });
-
-      // Match provider streams to episodes
+      // First, collect all stream keys from all providers
       providerTitleGroups.forEach(group => {
         const providerId = group.providerId;
         const providerStreams = group.title.streams || {};
         
         Object.keys(providerStreams).forEach(streamKey => {
-          // Stream key should be in Sxx-Exx format
-          if (streamsMap.has(streamKey)) {
-            const streamData = streamsMap.get(streamKey);
-            if (!streamData.sources.includes(providerId)) {
-              streamData.sources.push(providerId);
-            }
+          // Only process valid Sxx-Exx format stream keys
+          if (!streamKey.match(/^S\d{2}-E\d{2}$/)) {
+            return;
+          }
+          
+          // Create or update stream entry
+          if (!streamsMap.has(streamKey)) {
+            streamsMap.set(streamKey, {
+              air_date: null,
+              name: null,
+              overview: null,
+              still_path: null,
+              sources: []
+            });
+          }
+          
+          const streamData = streamsMap.get(streamKey);
+          if (!streamData.sources.includes(providerId)) {
+            streamData.sources.push(providerId);
           }
         });
       });
 
-      // Convert map to object and only include episodes with at least one provider
+      // Optionally enrich with TMDB metadata if available (but don't require it)
+      try {
+        const tvShowDetails = await this.getTVShowDetails(tmdbId);
+        
+        if (tvShowDetails && tvShowDetails.seasons) {
+          // Fetch all seasons in parallel
+          const seasonPromises = tvShowDetails.seasons
+            .filter(season => season.season_number >= 0) // Filter out specials
+            .map(season => this.getTVShowSeasonDetails(tmdbId, season.season_number));
+          
+          const seasonsData = await Promise.all(seasonPromises);
+          
+          // Enrich existing stream entries with TMDB metadata
+          seasonsData.forEach(seasonData => {
+            if (seasonData && seasonData.episodes) {
+              seasonData.episodes.forEach(episode => {
+                const seasonStr = String(episode.season_number).padStart(2, '0');
+                const episodeStr = String(episode.episode_number).padStart(2, '0');
+                const streamKey = `S${seasonStr}-E${episodeStr}`;
+                
+                // Only enrich if stream already exists (from providers)
+                if (streamsMap.has(streamKey)) {
+                  const streamData = streamsMap.get(streamKey);
+                  // Only set metadata if not already set (preserve provider data)
+                  if (!streamData.air_date) streamData.air_date = episode.air_date || null;
+                  if (!streamData.name) streamData.name = episode.name || null;
+                  if (!streamData.overview) streamData.overview = episode.overview || null;
+                  if (!streamData.still_path) streamData.still_path = episode.still_path || null;
+                }
+              });
+            }
+          });
+        }
+      } catch (error) {
+        // TMDB enrichment failed, but continue with provider data only
+        this.logger.debug(`Could not enrich TV show ${tmdbId} with TMDB metadata: ${error.message}`);
+      }
+
+      // Convert map to object - include all episodes that have at least one provider
       streamsMap.forEach((streamData, streamKey) => {
         if (streamData.sources.length > 0) {
           mainTitle.streams[streamKey] = streamData;

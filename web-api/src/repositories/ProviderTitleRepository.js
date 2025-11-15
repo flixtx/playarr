@@ -129,6 +129,11 @@ export class ProviderTitleRepository extends BaseRepository {
         key: { title_key: 1 },
         options: {},
         description: 'Find all providers for a title'
+      },
+      {
+        key: { type: 1, tmdb_id: 1, ignored: 1 },
+        options: {},
+        description: 'Change detection queries (type + tmdb_id + ignored filter)'
       }
     ];
   }
@@ -181,6 +186,29 @@ export class ProviderTitleRepository extends BaseRepository {
   async deleteByProvider(providerId) {
     const result = await this.deleteManyByQuery({ provider_id: providerId });
     return result.deletedCount || 0;
+  }
+
+  /**
+   * Get provider titles for change detection
+   * Returns all non-ignored provider titles with tmdb_id and type for aggregating lastUpdated timestamps
+   * @returns {Promise<Array<Object>>} Array of provider title documents with lastUpdated information
+   */
+  async getProviderTitlesForChangeDetection() {
+    return await this.findByQuery(
+      {
+        ignored: false,
+        tmdb_id: { $exists: true, $ne: null },
+        type: { $in: ['movies', 'tvshows'] }
+      },
+      {
+        projection: {
+          type: 1,
+          tmdb_id: 1,
+          lastUpdated: 1,
+          provider_id: 1
+        }
+      }
+    );
   }
 }
 

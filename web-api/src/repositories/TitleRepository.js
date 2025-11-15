@@ -147,6 +147,25 @@ export class TitleRepository extends BaseRepository {
   }
 
   /**
+   * Get main titles with lastUpdated timestamp
+   * Returns title_key, title_id, type, and lastUpdated for change detection
+   * @returns {Promise<Array<Object>>} Array of title documents with lastUpdated information
+   */
+  async getMainTitlesLastUpdated() {
+    return await this.findByQuery(
+      {},
+      {
+        projection: {
+          title_key: 1,
+          title_id: 1,
+          type: 1,
+          lastUpdated: 1
+        }
+      }
+    );
+  }
+
+  /**
    * Remove provider from titles.streams
    * Updates titles to remove provider from stream sources
    * @param {string} providerId - Provider ID to remove
