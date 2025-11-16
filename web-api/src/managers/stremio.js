@@ -93,53 +93,49 @@ class StremioManager extends BaseManager {
     // Use fixed addon name
     const addonName = 'Playarr';
 
+    // Start with base types
+    const types = ['movie', 'series'];
+    
+    // Build resources with all types merged (no duplicates)
+    const resourceTypes = ['movie', 'series'];
+    if (user?.liveTV?.m3u_url) {
+      resourceTypes.push('tv');
+      types.push('tv');
+    }
+
     const resources = [
       {
         name: 'catalog',
-        types: ['movie', 'series']
+        types: resourceTypes
       },
       {
         name: 'meta',
-        types: ['movie', 'series']
+        types: resourceTypes
       },
       {
         name: 'stream',
-        types: ['movie', 'series']
+        types: resourceTypes
       }
     ];
 
-    const types = ['movie', 'series'];
     const catalogs = [
       {
         type: 'movie',
-        id: 'top',
+        id: 'movies',
         name: 'Playarr Movies'
       },
       {
         type: 'series',
-        id: 'top',
+        id: 'series',
         name: 'Playarr Series'
       }
     ];
 
-    // Add Live TV support if user has it configured
+    // Add Live TV catalog if user has it configured
     if (user?.liveTV?.m3u_url) {
-      resources.push({
-        name: 'catalog',
-        types: ['tv']
-      });
-      resources.push({
-        name: 'meta',
-        types: ['tv']
-      });
-      resources.push({
-        name: 'stream',
-        types: ['tv']
-      });
-      types.push('tv');
       catalogs.push({
         type: 'tv',
-        id: 'top',
+        id: 'live-tv',
         name: 'Playarr Live TV'
       });
     }
@@ -170,11 +166,25 @@ class StremioManager extends BaseManager {
     try {
       // Handle Live TV type
       if (type === 'tv') {
-        if (!this._liveTVManager || !user?.liveTV?.m3u_url) {
+        if (!this._liveTVManager) {
+          this.logger.warn('LiveTVManager not available for TV catalog');
           return { metas: [] };
         }
         
+        if (!user?.liveTV?.m3u_url) {
+          this.logger.warn(`User ${user?.username || 'unknown'} does not have Live TV configured (m3u_url missing)`);
+          return { metas: [] };
+        }
+        
+        this.logger.debug(`Getting channels for user: ${user.username}`);
         const channels = await this._liveTVManager.getUserChannels(user.username);
+        this.logger.debug(`Found ${channels.length} channels for user: ${user.username}`);
+        
+        if (!channels || channels.length === 0) {
+          this.logger.warn(`No channels found for user: ${user.username}. Make sure Live TV sync job has run.`);
+          return { metas: [] };
+        }
+        
         const metas = channels.map(channel => {
           // URL-encode the channel ID to ensure proper URL construction by Stremio
           const encodedId = encodeURIComponent(channel.channel_id);
