@@ -422,24 +422,58 @@ class ProvidersManager extends BaseManager {
 
   /**
    * Write all providers to MongoDB
-   * Deletes all existing providers and inserts new ones
+   * Uses bulkWrite to safely update existing, insert new, and delete removed providers
    * @private
    */
   async _writeAllProviders(providers) {
     try {
       const now = new Date();
       
-      // Delete all existing providers
-      await this._providerRepo.deleteManyByQuery({});
+      // Get all existing providers to identify which ones to update vs insert
+      const existingProviders = await this._providerRepo.findByQuery({});
+      const existingIds = new Set(
+        (existingProviders || []).map(p => p.id).filter(Boolean)
+      );
       
-      // Insert all new providers with timestamps
-      if (providers.length > 0) {
-        const providersWithTimestamps = providers.map(p => ({
-          ...p,
+      // Build bulk operations
+      const operations = [];
+      
+      // Process each provider: replace existing or insert new
+      // Note: Providers use soft delete (deleted: true), so they remain in the array
+      // and are never physically deleted from the database
+      for (const provider of providers) {
+        if (!provider.id) {
+          this.logger.warn('Skipping provider without id:', provider);
+          continue;
+        }
+        
+        const providerWithTimestamps = {
+          ...provider,
           lastUpdated: now,
-          createdAt: p.createdAt || now
-        }));
-        await this._providerRepo.insertMany(this._providerRepo.collectionName, providersWithTimestamps);
+          createdAt: provider.createdAt || now
+        };
+        
+        if (existingIds.has(provider.id)) {
+          // Update existing provider
+          operations.push({
+            replaceOne: {
+              filter: { id: provider.id },
+              replacement: providerWithTimestamps
+            }
+          });
+        } else {
+          // Insert new provider
+          operations.push({
+            insertOne: {
+              document: providerWithTimestamps
+            }
+          });
+        }
+      }
+      
+      // Execute all operations atomically per document
+      if (operations.length > 0) {
+        await this._providerRepo.bulkWrite(operations);
       }
       
       this.logger.info(`Saved ${providers.length} providers to MongoDB`);
