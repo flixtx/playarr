@@ -111,7 +111,7 @@ function ExcludedCategoriesForm({ provider, categoryType, categories, loading, o
       // Make batch update API call
       const response = await axiosInstance.post(
         `${API_ENDPOINTS.providerCategories(provider.id)}/batch`,
-        enabledCategories
+        { enabled_categories: enabledCategories }
       );
 
       if (response.data.success) {
