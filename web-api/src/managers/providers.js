@@ -164,49 +164,67 @@ class ProvidersManager extends BaseManager {
    * Coordinates: ProviderTitleRepository → TitleStreamRepository → TitleRepository
    * @private
    * @param {string} providerId - Provider ID
-   * @param {Array<string>} [categoryKeys=null] - Optional: specific category keys
-   * @param {Object} [enabledCategories=null] - Optional: enabled categories object
-   * @returns {Promise<{titlesUpdated: number, streamsRemoved: number, titleKeys: Array<string>}>}
+   * @param {boolean} isEnabled - Whether provider is enabled
+   * @param {Object} enabledCategories - Enabled categories object with movies and tvshows arrays
+   * @returns {Promise<{titlesUpdated: number, streamsRemoved: number, titleKeys: Array<string>, providerTitlesDeleted: number}>}
    */
-  async _removeProviderFromTitles(providerId, categoryKeys = null, enabledCategories = null) {
+  async _removeProviderFromTitles(providerId, isEnabled, enabledCategories) {
     try {
+      if (!enabledCategories || typeof enabledCategories !== 'object') {
+        throw new Error('enabledCategories must be provided and must be an object');
+      }
+
       let query = {
         provider_id: providerId,
         tmdb_id: { $exists: true, $ne: null } // Only titles with TMDB match
       };
 
-      // Build query filter based on parameters
-      if (enabledCategories) {
-        // Categories-changed scenario: remove from disabled categories
-        const enabledCategoryKeys = [
-          ...(enabledCategories.movies || []),
-          ...(enabledCategories.tvshows || [])
-        ];
-        const enabledCategoryIds = this._extractCategoryIdsFromKeys(enabledCategoryKeys);
-        
-        if (enabledCategoryIds.length > 0) {
-          query.category_id = { $nin: enabledCategoryIds }; // NOT in enabled = disabled
-        }
-        // If no enabled categories, all are disabled, so query remains as-is
-      } else if (categoryKeys && categoryKeys.length > 0) {
-        // Specific categories scenario
-        const categoryIds = this._extractCategoryIdsFromKeys(categoryKeys);
-        if (categoryIds.length > 0) {
-          query.category_id = { $in: categoryIds };
+      // If provider is disabled/deleted, delete ALL titles
+      // If provider is enabled, delete only titles from disabled categories
+      if (isEnabled) {
+        // Provider is enabled - delete only disabled category titles
+        const enabledMovieKeys = enabledCategories.movies;
+        const enabledTvshowKeys = enabledCategories.tvshows;
+        const enabledMovieIds = this._extractCategoryIdsFromKeys(enabledMovieKeys);
+        const enabledTvshowIds = this._extractCategoryIdsFromKeys(enabledTvshowKeys);
+
+        // Build $or query to handle movies and tvshows separately
+        const orConditions = [];
+
+        // Movies: delete if category_id is NOT in enabled movie category IDs
+        if (enabledMovieIds.length > 0) {
+          orConditions.push({
+            type: 'movies',
+            category_id: { $nin: enabledMovieIds }
+          });
         } else {
-          // Invalid category keys, return early
-          return { titlesUpdated: 0, streamsRemoved: 0, titleKeys: [] };
+          // If no enabled movie categories, all movies are disabled
+          orConditions.push({ type: 'movies' });
+        }
+
+        // TV shows: delete if category_id is NOT in enabled tvshow category IDs
+        if (enabledTvshowIds.length > 0) {
+          orConditions.push({
+            type: 'tvshows',
+            category_id: { $nin: enabledTvshowIds }
+          });
+        } else {
+          // If no enabled tvshow categories, all tvshows are disabled
+          orConditions.push({ type: 'tvshows' });
+        }
+
+        if (orConditions.length > 0) {
+          query.$or = orConditions;
         }
       }
-      // If categoryKeys is null and enabledCategories is null, query remains:
-      // { provider_id: providerId, tmdb_id: { $exists: true, $ne: null } }
-      // This means "all categories" (for delete/disable provider)
+      // If provider is disabled, query remains: { provider_id: providerId, tmdb_id: { $exists: true, $ne: null } }
+      // This means "all titles" (for disabled/deleted provider)
 
       // Step 1: Find provider titles using ProviderTitleRepository
       const providerTitles = await this._providerTitleRepo.findByQuery(query);
 
       if (providerTitles.length === 0) {
-        return { titlesUpdated: 0, streamsRemoved: 0, titleKeys: [] };
+        return { titlesUpdated: 0, streamsRemoved: 0, titleKeys: [], providerTitlesDeleted: 0 };
       }
 
       // Step 2: Build title_keys from provider titles
@@ -217,19 +235,23 @@ class ProvidersManager extends BaseManager {
       )];
 
       if (titleKeys.length === 0) {
-        return { titlesUpdated: 0, streamsRemoved: 0, titleKeys: [] };
+        return { titlesUpdated: 0, streamsRemoved: 0, titleKeys: [], providerTitlesDeleted: 0 };
       }
 
-      // Step 3: Delete title_streams using TitleStreamRepository
+      // Step 3: Delete provider titles from provider_titles collection
+      const deletedProviderTitles = await this._providerTitleRepo.deleteManyByQuery(query);
+
+      // Step 4: Delete title_streams using TitleStreamRepository
       const deletedStreams = await this._titleStreamRepo.deleteByProviderAndTitleKeys(providerId, titleKeys);
 
-      // Step 4: Update titles.streams using TitleRepository
+      // Step 5: Update titles.streams using TitleRepository
       const { titlesUpdated, streamsRemoved } = await this._titleRepo.removeProviderFromStreams(providerId, titleKeys);
 
       return {
         titlesUpdated,
         streamsRemoved: deletedStreams.deletedCount || 0,
-        titleKeys
+        titleKeys,
+        providerTitlesDeleted: deletedProviderTitles.deletedCount || 0
       };
     } catch (error) {
       this.logger.error(`Error removing provider ${providerId} from titles: ${error.message}`);
@@ -694,15 +716,15 @@ class ProvidersManager extends BaseManager {
       if (enabledChanged && !willBeEnabled) {
         // Provider being disabled - perform cleanup
         try {
-          const { titlesUpdated, streamsRemoved, titleKeys } = 
-            await this._removeProviderFromTitles(providerId);
+          const { titlesUpdated, streamsRemoved, titleKeys, providerTitlesDeleted } = 
+            await this._removeProviderFromTitles(providerId, willBeEnabled, updatedProvider.enabled_categories);
           
           // removeProviderFromTitles already deletes title_streams, so no need to call deleteProviderTitleStreams
           const deletedEmptyTitles = await this._deleteTitlesWithoutStreams(titleKeys);
           
           this.logger.info(
-            `Provider ${providerId} disabled cleanup: ${titlesUpdated} titles updated, ` +
-            `${streamsRemoved} streams removed, ${deletedEmptyTitles} empty titles deleted`
+            `Provider ${providerId} disabled cleanup: ${providerTitlesDeleted} provider titles deleted, ` +
+            `${titlesUpdated} titles updated, ${streamsRemoved} streams removed, ${deletedEmptyTitles} empty titles deleted`
           );
         } catch (error) {
           this.logger.error(`Error cleaning up disabled provider ${providerId}: ${error.message}`);
@@ -772,8 +794,9 @@ class ProvidersManager extends BaseManager {
       // Perform cleanup operations using repositories
       try {
         // 1. Remove provider from titles.streams (and delete title_streams)
+        const isProviderEnabled = provider.enabled !== false;
         const { titlesUpdated, streamsRemoved, titleKeys } = 
-          await this._removeProviderFromTitles(providerId);
+          await this._removeProviderFromTitles(providerId, isProviderEnabled, provider.enabled_categories);
         
         // 2. Delete all provider_titles for this provider (only on delete, not disable)
         const deletedTitles = await this._providerTitleRepo.deleteByProvider(providerId);
@@ -916,6 +939,8 @@ class ProvidersManager extends BaseManager {
         };
       }
 
+      const provider = providerResult.response;
+
       // Validate enabledCategories structure
       if (!enabledCategories || typeof enabledCategories !== 'object') {
         return {
@@ -939,8 +964,8 @@ class ProvidersManager extends BaseManager {
         {
           $set: {
             enabled_categories: {
-              movies: enabledCategories.movies || [],
-              tvshows: enabledCategories.tvshows || []
+              movies: enabledCategories.movies,
+              tvshows: enabledCategories.tvshows
             },
             lastUpdated: now
           }
@@ -953,15 +978,16 @@ class ProvidersManager extends BaseManager {
       // Perform cleanup for disabled categories using repositories
       try {
         // Remove provider from titles for disabled categories
-        const { titlesUpdated, streamsRemoved, titleKeys } = 
-          await this._removeProviderFromTitles(providerId, null, enabledCategories);
+        const isProviderEnabled = provider.enabled !== false;
+        const { titlesUpdated, streamsRemoved, titleKeys, providerTitlesDeleted } = 
+          await this._removeProviderFromTitles(providerId, isProviderEnabled, enabledCategories);
         
         // Delete titles without streams
         const deletedEmptyTitles = await this._deleteTitlesWithoutStreams(titleKeys);
         
         this.logger.info(
-          `Provider ${providerId} categories changed cleanup: ${titlesUpdated} titles updated, ` +
-          `${streamsRemoved} streams removed, ${deletedEmptyTitles} empty titles deleted`
+          `Provider ${providerId} categories changed cleanup: ${providerTitlesDeleted} provider titles deleted, ` +
+          `${titlesUpdated} titles updated, ${streamsRemoved} streams removed, ${deletedEmptyTitles} empty titles deleted`
         );
       } catch (error) {
         this.logger.error(`Error cleaning up categories for provider ${providerId}: ${error.message}`);
