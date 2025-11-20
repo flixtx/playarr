@@ -253,7 +253,7 @@ class TitlesManager extends BaseManager {
   _buildTitlesQuery({ mediaType, searchQuery, yearConfig, startsWith, inWatchlist, watchlistTitleKeys }) {
     const query = {};
 
-    if (inWatchlist !== null) {
+    if (inWatchlist !== undefined && inWatchlist !== null) {
       if (inWatchlist === 'true') {
         query.title_key = { $in: watchlistTitleKeys };
       } else {
@@ -339,19 +339,14 @@ class TitlesManager extends BaseManager {
 
       // Parse year filter
       const yearConfig = this._parseYearFilter(yearFilter);
-      let watchlistTitleKeys = [];
       
-      if (inWatchlist !== null) {
-        const userData = await this._userManager.getUserByUsername(user.username);
-        watchlistTitleKeys = userData.watchlist || [];
-
-        this.logger.info(`Watchlist title keys: ${watchlistTitleKeys}`);
-      }
+      const userData = await this._userManager.getUserByUsername(user.username);
+      const watchlistTitleKeys = userData.watchlist || [];
 
       // Build MongoDB query
       const mongoQuery = this._buildTitlesQuery({ mediaType, searchQuery, yearConfig, startsWith, inWatchlist, watchlistTitleKeys });
 
-      // Get total count for pagination (before watchlist filter, as watchlist is applied in memory)
+      // Get total count for pagination
       let totalCount = await this._titleRepo.count(mongoQuery);
       
       // Build findMany options
@@ -368,11 +363,8 @@ class TitlesManager extends BaseManager {
 
       // Process titles and build response
       const items = [];
-      const startIdx = inWatchlist === null ? 0 : (page - 1) * perPage;
-      const endIdx = inWatchlist === null ? titlesData.length : startIdx + perPage;
-      const titlesToProcess = titlesData.slice(startIdx, endIdx);
 
-      for (const titleData of titlesToProcess) {
+      for (const titleData of titlesData) {
         const titleKey = titleData.title_key || `${titleData.type}-${titleData.title_id}`;
         const titleName = titleData.title || '';
         const titleType = titleData.type || '';
