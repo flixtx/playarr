@@ -10,7 +10,7 @@ const jobsConfig = JSON.parse(readFileSync(join(__dirname, 'jobs.json'), 'utf-8'
 
 /**
  * Engine scheduler class for the Playarr Web-API
- * Manages job scheduling using native setInterval (replaces Bree.js)
+ * Manages job scheduling using native setInterval timers
  */
 export class EngineScheduler {
   /**

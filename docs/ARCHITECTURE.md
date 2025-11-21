@@ -101,10 +101,10 @@ The UI is built and served statically by the API server.
 - **Incremental Updates**: Only processes new or updated content to minimize processing time
 
 ### 7. Operational Excellence
-- **Automated Job Scheduling**: Uses Bree.js for reliable job scheduling with configurable intervals:
-  - Provider title processing: Every 1 hour
-  - Main title aggregation: Every 30 minutes (first run 5 minutes after startup)
-  - Cache purging: Every 15 minutes
+- **Automated Job Scheduling**: The in-process `EngineScheduler` uses native timers and the metadata in `web-api/src/jobs.json` to control recurring jobs:
+  - `syncIPTVProviderTitles`: Runs shortly after startup (configurable delay) and then every 6 hours; triggers downstream jobs on completion
+  - `providerTitlesMonitor`: Executes as a post-job hook to process aggregated titles when the sync finishes
+  - `syncLiveTV`: Refreshes channels and EPG data on startup and every 12 hours
 - **Comprehensive Logging**: Detailed logging with configurable log levels (debug, info, error)
 - **Progress Monitoring**: Real-time progress updates for long-running operations
 - **Health Monitoring**: Health check support for containerized deployments
