@@ -35,6 +35,11 @@ export class ProgramRepository extends BaseRepository {
         key: { username: 1, channel_id: 1 },
         options: {},
         description: 'User channel programs lookup'
+      },
+      {
+        key: { username: 1, channel_id: 1, start: 1 },
+        options: {},
+        description: 'Time range queries with sort by start time'
       }
     ];
   }

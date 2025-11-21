@@ -35,6 +35,11 @@ export class ProviderRepository extends BaseRepository {
         key: { deleted: 1, priority: 1 },
         options: {},
         description: 'Active providers with priority sort'
+      },
+      {
+        key: { priority: 1 },
+        options: { partialFilterExpression: { deleted: { $ne: true } } },
+        description: 'Non-deleted providers with priority sort (partial index)'
       }
     ];
   }

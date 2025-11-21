@@ -126,6 +126,16 @@ export class ProviderTitleRepository extends BaseRepository {
         description: 'Incremental sync queries'
       },
       {
+        key: { provider_id: 1, ignored: 1, lastUpdated: 1 },
+        options: {},
+        description: 'Incremental sync queries with ignored filter'
+      },
+      {
+        key: { provider_id: 1, type: 1, ignored: 1 },
+        options: {},
+        description: 'Type+ignored filtering per provider'
+      },
+      {
         key: { title_key: 1 },
         options: {},
         description: 'Find all providers for a title'
